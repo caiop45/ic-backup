@@ -228,7 +228,7 @@ if __name__ == "__main__":
     )
     
     print(f"[10] Todos clusters concluídos em {time.time() - start_fit:.2f}s")
-    
+    #teste
     data_np = dados_scaled_cpu.numpy()
     n_total = len(data_np)
    # sample_size = int(0.3 * n_total)
