@@ -157,8 +157,8 @@ def preprocessamento():
     dados_taxi['hora_do_dia'] = dados_taxi['tpep_pickup_datetime'].dt.hour
     dados_taxi['dia_da_semana'] = dados_taxi['tpep_pickup_datetime'].dt.dayofweek
 
-    print("[3] Filtrando apenas segunda a sexta...")
-    dados_taxi = dados_taxi[dados_taxi['dia_da_semana'].between(0, 4)]
+   # print("[3] Filtrando apenas segunda a sexta...")
+   # dados_taxi = dados_taxi[dados_taxi['dia_da_semana'].between(0, 4)]
     dados_taxi = dados_taxi.drop(columns=['dia_da_semana'])
 
     cols = [
@@ -167,7 +167,7 @@ def preprocessamento():
         'DO_longitude', 'DO_latitude'
     ]
     dados_taxi = dados_taxi[cols].dropna()
-  #  dados_taxi = dados_taxi.sample(frac=0.00001, random_state=RANDOM_STATE)
+    dados_taxi = dados_taxi.sample(frac=0.5, random_state=RANDOM_STATE)
 
     scaler = StandardScaler()
     dados_scaled = scaler.fit_transform(dados_taxi).astype(np.float32)
@@ -228,11 +228,10 @@ if __name__ == "__main__":
     )
     
     print(f"[10] Todos clusters concluídos em {time.time() - start_fit:.2f}s")
-    #teste
     data_np = dados_scaled_cpu.numpy()
     n_total = len(data_np)
-   # sample_size = int(0.3 * n_total)
-    sample_size = int(1.0 * n_total)
+    sample_size = int(0.3 * n_total)
+    #sample_size = int(1.0 * n_total)
     
     np.random.seed(RANDOM_STATE)
     sample_indices = np.random.choice(n_total, size=sample_size, replace=False)
@@ -274,7 +273,7 @@ for res in results:
 
 results = sorted(results, key=lambda x: x['n_clusters'])
 # Salvar métricas em arquivo
-with open('metricas_clusters.txt', 'w') as f:
+with open('metricas_clusters_todos_dias.txt', 'w') as f:
     f.write("n_clusters, inertia, aic, bic, silhouette, calinski_harabasz, davies_bouldin\n")
     for i, res in enumerate(results):
         f.write(f"{res['n_clusters']}, {res['inertia']}, {res['aic']}, {res['bic']}, {res['silhouette']}, {res['calinski_harabasz']}, {res['davies_bouldin']}\n")
@@ -339,8 +338,8 @@ plt.title('Davies-Bouldin vs Número de Clusters')
 plt.grid(True)
 
 plt.tight_layout()
-plt.savefig('gráficos/avaliacao_clusters_gmm.png', dpi=300)
+plt.savefig('gráficos/avaliacao_clusters_gmm_todos_dias.png', dpi=300)
 plt.show()
 
-print("[11] Gráficos gerados e salvos em 'gráficos/avaliacao_clusters_gmm.png'")
-print("[12] Métricas salvas em 'metricas_clusters.txt'")
+print("[11] Gráficos gerados e salvos em 'gráficos/avaliacao_clusters_gmm_todos_dias.png'")
+print("[12] Métricas salvas em 'metricas_clusters_dias_uteis.txt'")

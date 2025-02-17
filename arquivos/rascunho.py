@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
 # --------------------------------------------
-# Métricas de avaliação usando cupy para otimização dos cálculos
+# Métricas Customizadas com CuPy
 # --------------------------------------------
 
 def silhouette_score_cupy(X, labels):
@@ -147,29 +147,33 @@ MAX_ITER = 100
 
 def preprocessamento():
     os.makedirs('gráficos', exist_ok=True)
+    print("[1] Iniciando processamento...")
     start_time = time.time()
+
+    print("[2] Carregando e processando dados...")
     dados_taxi = pd.read_parquet('/home-ext/caioloss/Dados/viagens_lat_long.parquet', engine='pyarrow')
     dados_taxi['tpep_pickup_datetime'] = pd.to_datetime(dados_taxi['tpep_pickup_datetime'])
 
     dados_taxi['hora_do_dia'] = dados_taxi['tpep_pickup_datetime'].dt.hour
     dados_taxi['dia_da_semana'] = dados_taxi['tpep_pickup_datetime'].dt.dayofweek
 
-    dados_taxi = dados_taxi[dados_taxi['dia_da_semana'].between(0, 4)]
+    print("[3] Filtrando apenas segunda a sexta...")
+    dados_taxi = dados_taxi[dados_taxi['dia_da_semana'].between(5, 8)]
     dados_taxi = dados_taxi.drop(columns=['dia_da_semana'])
+
     cols = [
         'hora_do_dia',
         'PU_longitude', 'PU_latitude',
         'DO_longitude', 'DO_latitude'
     ]
     dados_taxi = dados_taxi[cols].dropna()
-    #Para testar mudanças no código, use um valor pequeno de frac
-    #dados_taxi = dados_taxi.sample(frac=0.00001, random_state=RANDOM_STATE)
+    dados_taxi = dados_taxi.sample(frac=0.5, random_state=RANDOM_STATE)
 
     scaler = StandardScaler()
     dados_scaled = scaler.fit_transform(dados_taxi).astype(np.float32)
     dados_scaled_cpu = torch.tensor(dados_scaled)
     
-    print(f"Pré-processamento concluído em {time.time() - start_time:.2f}s")
+    print(f"[6] Pré-processamento concluído em {time.time() - start_time:.2f}s")
     return dados_scaled_cpu
 
 def fit_gmm(n_clusters, data_cpu):
@@ -177,7 +181,7 @@ def fit_gmm(n_clusters, data_cpu):
         torch.cuda.init()
         device = torch.device("cuda")
         
-        print(f"Iniciando GMM com {n_clusters} clusters...")
+        print(f"[7] Iniciando GMM com {n_clusters} clusters...")
         data_gpu = data_cpu.to(device)
         
         gmm = GaussianMixture(
@@ -203,6 +207,7 @@ def fit_gmm(n_clusters, data_cpu):
         aic = 2 * num_params - 2 * total_log_likelihood
         bic = num_params * np.log(n_samples) - 2 * total_log_likelihood
         
+        print(f"[8] Concluído {n_clusters} clusters | Inércia: {inertia:.2f} | AIC: {aic:.2f} | BIC: {bic:.2f}")
         return {
             'n_clusters': n_clusters,
             'inertia': inertia,
@@ -215,21 +220,17 @@ if __name__ == "__main__":
     dados_scaled_cpu = preprocessamento()
     clusters_range = range(10, 50)
     
-    print("Iniciando avaliação paralela de clusters...")
+    print("[9] Iniciando avaliação paralela de clusters...")
     start_fit = time.time()
     
     results = Parallel(n_jobs=N_JOBS, prefer="processes")(
         delayed(fit_gmm)(n, dados_scaled_cpu) for n in clusters_range
     )
     
-    print(f"Todos clusters concluídos em {time.time() - start_fit:.2f}s")
-    
+    print(f"[10] Todos clusters concluídos em {time.time() - start_fit:.2f}s")
     data_np = dados_scaled_cpu.numpy()
     n_total = len(data_np)
-
-    #Calcula métricas usando apenas uma amostragem dos dados
-    #sample_size = int(0.3 * n_total)
-    sample_size = int(1.0 * n_total)
+    sample_size = int(0.01 * n_total)
     
     np.random.seed(RANDOM_STATE)
     sample_indices = np.random.choice(n_total, size=sample_size, replace=False)
@@ -238,7 +239,7 @@ if __name__ == "__main__":
     # Conversão para CuPy
     data_sample_cupy = cp.asarray(data_sample)
     
-for res in results:
+    for res in results:
         labels = res['labels']
         labels_sample = labels[sample_indices]
         print(f"Calculando métricas para {res['n_clusters']} clusters...")
@@ -271,7 +272,7 @@ for res in results:
 
 results = sorted(results, key=lambda x: x['n_clusters'])
 # Salvar métricas em arquivo
-with open('metricas_clusters.txt', 'w') as f:
+with open('metricas_clusters_fds.txt', 'w') as f:
     f.write("n_clusters, inertia, aic, bic, silhouette, calinski_harabasz, davies_bouldin\n")
     for i, res in enumerate(results):
         f.write(f"{res['n_clusters']}, {res['inertia']}, {res['aic']}, {res['bic']}, {res['silhouette']}, {res['calinski_harabasz']}, {res['davies_bouldin']}\n")
@@ -336,8 +337,8 @@ plt.title('Davies-Bouldin vs Número de Clusters')
 plt.grid(True)
 
 plt.tight_layout()
-plt.savefig('gráficos/avaliacao_clusters_gmm.png', dpi=300)
+plt.savefig('gráficos/avaliacao_clusters_gmm_fds.png', dpi=300)
 plt.show()
 
-print("[11] Gráficos gerados e salvos em 'gráficos/avaliacao_clusters_gmm.png'")
-print("[12] Métricas salvas em 'metricas_clusters.txt'")
+print("[11] Gráficos gerados e salvos em 'gráficos/avaliacao_clusters_gmm_fds.png'")
+print("[12] Métricas salvas em 'metricas_clusters_dias_fds.txt'")
