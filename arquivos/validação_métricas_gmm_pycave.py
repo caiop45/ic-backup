@@ -218,7 +218,7 @@ def fit_gmm(n_clusters, data_cpu):
 
 if __name__ == "__main__":
     dados_scaled_cpu = preprocessamento()
-    clusters_range = range(10, 50)
+    clusters_range = range(10, 30)
     
     print("[9] Iniciando avaliação paralela de clusters...")
     start_fit = time.time()

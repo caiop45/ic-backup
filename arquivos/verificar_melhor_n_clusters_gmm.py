@@ -18,9 +18,10 @@ dados_taxi['tpep_pickup_datetime'] = pd.to_datetime(dados_taxi['tpep_pickup_date
 # Cria features temporais
 dados_taxi['hora_do_dia'] = dados_taxi['tpep_pickup_datetime'].dt.hour
 dados_taxi['dia_da_semana'] = dados_taxi['tpep_pickup_datetime'].dt.dayofweek
+dados_taxi = dados_taxi[dados_taxi['dia_da_semana'].between(1, 3)]
 
 # Seleciona colunas relevantes (inclua PULocationID e DOLocationID se disponíveis)
-cols = ['hora_do_dia', 'dia_da_semana', 
+cols = ['hora_do_dia', 
         'PU_longitude', 'PU_latitude', 
         'DO_longitude', 'DO_latitude',
         'PULocationID', 'DOLocationID']  # Adicione estas colunas!
@@ -41,7 +42,6 @@ print(f"[1] Pré-processamento concluído em {time.time() - tempo_inicio:.2f}s")
 # 3. Seleção do Número de Clusters (BIC/AIC)
 # =============================
 n_components_range = range(10, 30)
-bic, aic = [], []
 
 tempo_inicio = time.time()
 for n in n_components_range:
