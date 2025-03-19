@@ -257,10 +257,8 @@ for i, metric in enumerate(metrics):
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height, f'{height:.4f}', ha='center', va='bottom')
 
-# Se houver subplots extras (neste caso, 1), removê-los
 for j in range(len(metrics), len(axs)):
     fig.delaxes(axs[j])
 
 plt.tight_layout()
-plt.savefig("/home/caioloss/gráficos/comparacao_metricas.png")
-plt.show()  # Exibe a figura (opcional)
+plt.savefig("/home/caioloss/gráficos/linear/comparacao_metricas_v1.png")  

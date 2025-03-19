@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Configurações iniciais
 SYNTHETIC_MULTIPLIER = 0.5
-SAVE_DIR = "/home/caioloss/gráficos/"
+SAVE_DIR = "/home/caioloss/gráficos/linear/"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # --------------------------------------------------
@@ -146,7 +146,7 @@ for nc in [25, 30, 35]:
 
             # Criando o gráfico comparativo com barras lado a lado
             fig, axs = plt.subplots(3, 2, figsize=(12, 12))
-            axs = axs.flatten()  # Facilita a iteração
+            axs = axs.flatten()  
 
             for i, metric in enumerate(metrics_list):
                 ax = axs[i]
