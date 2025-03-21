@@ -12,8 +12,10 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from pycave.bayes import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
-# Configurações iniciais
-SYNTHETIC_MULTIPLIER = 0.5
+# --------------------------------------------------
+# CONFIGURAÇÕES INICIAIS
+# --------------------------------------------------
+SYNTHETIC_MULTIPLIER = 5
 SAVE_DIR = "/home/caioloss/gráficos/linear/"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -32,7 +34,7 @@ dados_gmm = dados[features].dropna().sample(frac=1.0)
 dados_gmm['data_do_dia'] = pd.to_datetime(dados_gmm['data_do_dia']).apply(lambda x: x.toordinal())
 
 # --------------------------------------------------
-# Funções auxiliares
+# FUNÇÕES AUXILIARES
 # --------------------------------------------------
 def create_sequence_dataset(series_values, window_size=4):
     X, y = [], []
@@ -42,7 +44,7 @@ def create_sequence_dataset(series_values, window_size=4):
     return np.array(X), np.array(y)
 
 def smape(y_true, y_pred):
-    return np.mean(2 * np.abs(y_true - y_pred) / (np.abs(y_true) + np.abs(y_pred) + 1e-8)) * 100 
+    return np.mean(2 * np.abs(y_true - y_pred) / (np.abs(y_true) + np.abs(y_pred) + 1e-8)) * 100
 
 class DLinear(nn.Module):
     def __init__(self, input_len=4, output_dim=1):
@@ -57,6 +59,7 @@ def train_model(model, X_train, y_train, X_val, y_val, epochs=50, lr=0.001):
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
+        # Treino
         model.train()
         optimizer.zero_grad()
         y_pred = model(X_train)
@@ -64,27 +67,36 @@ def train_model(model, X_train, y_train, X_val, y_val, epochs=50, lr=0.001):
         loss.backward()
         optimizer.step()
 
+        # Validação
+        model.eval()
+        with torch.no_grad():
+            y_val_pred = model(X_val)
+            val_loss = criterion(y_val_pred, y_val)
+
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch [{epoch+1}/{epochs}] - Loss: {loss.item():.4f} - Val Loss: {val_loss.item():.4f}")
+
 # --------------------------------------------------
-# Loop principal de experimentos
+# LOOP PRINCIPAL DE EXPERIMENTOS
 # --------------------------------------------------
 for nc in [25, 30, 35]:
     # Treinar GMM e gerar dados sintéticos
     scaler = StandardScaler()
     train_scaled = scaler.fit_transform(dados_gmm).astype(np.float32)
-    
+
     gmm = GaussianMixture(
         num_components=nc,
         covariance_type='full',
         trainer_params={'max_epochs': 100, 'accelerator': 'gpu', 'devices': 1}
     )
     gmm.fit(train_scaled)
-    
+
     synthetic_scaled = gmm.sample(int(len(dados_gmm) * SYNTHETIC_MULTIPLIER)).cpu().numpy()
     synthetic_df = pd.DataFrame(scaler.inverse_transform(synthetic_scaled), columns=features)
     synthetic_df['data_do_dia'] = synthetic_df['data_do_dia'].round().astype(int).apply(datetime.date.fromordinal)
     synthetic_df['hora_do_dia'] = synthetic_df['hora_do_dia'].round().astype(int)
 
-    # Processar dados reais e sintéticos
+    # Processar dados reais
     df_real_grouped = (
         dados[['data_do_dia', 'hora_do_dia']]
         .groupby(['data_do_dia', 'hora_do_dia'])
@@ -94,10 +106,18 @@ for nc in [25, 30, 35]:
     df_real_grouped['datetime'] = pd.to_datetime(df_real_grouped['data_do_dia']) + pd.to_timedelta(df_real_grouped['hora_do_dia'], unit='h')
     df_real_grouped = df_real_grouped.sort_values('datetime').reset_index(drop=True)
 
+    # Combinar dados reais e sintéticos
     df_real_plus_sint = pd.concat([
     df_real_grouped,
     synthetic_df.groupby(['data_do_dia', 'hora_do_dia']).size().reset_index(name='num_viagens')
-        ]).groupby(['data_do_dia', 'hora_do_dia'], as_index=False)['num_viagens'].sum()
+    ]).groupby(['data_do_dia', 'hora_do_dia'], as_index=False)['num_viagens'].sum()
+
+    df_real_plus_sint['datetime'] = (
+        pd.to_datetime(df_real_plus_sint['data_do_dia']) +
+        pd.to_timedelta(df_real_plus_sint['hora_do_dia'], unit='h')
+    )
+    df_real_plus_sint = df_real_plus_sint.sort_values('datetime').reset_index(drop=True)
+
     # Criar sequências
     X_real, y_real = create_sequence_dataset(df_real_grouped['num_viagens'].values.astype(float))
     X_real_sint, y_real_sint = create_sequence_dataset(df_real_plus_sint['num_viagens'].values.astype(float))
@@ -114,7 +134,7 @@ for nc in [25, 30, 35]:
             metrics_results = {}
 
             for data_type, (X, y) in zip(['real', 'real_synthetic'],
-                                        [(X_real_t, y_real_t), (X_real_sint_t, y_real_sint_t)]):
+                                         [(X_real_t, y_real_t), (X_real_sint_t, y_real_sint_t)]):
                 seed = torch.randint(0, 2**32-1, (1,)).item()
                 torch.manual_seed(seed)
 
@@ -146,17 +166,16 @@ for nc in [25, 30, 35]:
 
             # Criando o gráfico comparativo com barras lado a lado
             fig, axs = plt.subplots(3, 2, figsize=(12, 12))
-            axs = axs.flatten()  
+            axs = axs.flatten()
 
             for i, metric in enumerate(metrics_list):
                 ax = axs[i]
-                # Duas barras: "Real" e "Real + Sintético"
                 bars = ax.bar(['Real', 'Real + Sintético'], [values_real[i], values_real_sint[i]])
                 ax.set_title(metric)
-                # Exibindo os valores das métricas acima de cada barra
                 for bar in bars:
                     height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height, f'{height:.4f}', ha='center', va='bottom')
+                    ax.text(bar.get_x() + bar.get_width()/2., height, f'{height:.4f}', 
+                            ha='center', va='bottom')
 
             # Caso haja algum subplot extra, removê-lo
             for j in range(len(metrics_list), len(axs)):
@@ -164,5 +183,5 @@ for nc in [25, 30, 35]:
 
             plt.suptitle(f"nc={nc} | lr={lr} | epochs={epochs} | seed={seed}")
             plt.tight_layout()
-            plt.savefig(f"{SAVE_DIR}nc_{nc}_lr_{lr}_epochs_{epochs}_comparacao.png")
+            plt.savefig(f"{SAVE_DIR}synthetic_{SYNTHETIC_MULTIPLIER}_nc_{nc}_lr_{lr}_epochs_{epochs}_comparacao.png")
             plt.close()
