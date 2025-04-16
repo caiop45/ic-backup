@@ -12,6 +12,8 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from pycave.bayes import GaussianMixture
 from sklearn.preprocessing import StandardScaler
+from converter_lagitude_zona_v2 import add_location_ids_cupy
+import geopandas as gpd
 
 # --------------------------------------------------
 # CONFIGURAÇÕES INICIAIS
@@ -22,28 +24,33 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 NUM_EXECUCOES = 10  # Número de execuções com diferentes seeds
 
 # --------------------------------------------------
-# 1) LEITURA E PREPARAÇÃO INICIAL DOS DADOS REAIS
+# 1) LEITURA E PREPARAÇÃO INICIAL DOS dados_reais REAIS 
 # --------------------------------------------------
-dados = pd.read_parquet('/home-ext/caioloss/Dados/viagens_lat_long.parquet')
-dados['tpep_pickup_datetime'] = pd.to_datetime(dados['tpep_pickup_datetime'])
-dados['hora_do_dia'] = dados['tpep_pickup_datetime'].dt.hour
-dados['dia_da_semana'] = dados['tpep_pickup_datetime'].dt.dayofweek
-dados = dados[dados['dia_da_semana'].between(0, 2)]
-dados['data_do_dia'] = dados['tpep_pickup_datetime'].dt.date
+dados_reais = pd.read_parquet('/home-ext/caioloss/Dados/viagens_lat_long.parquet')
+dados_reais['tpep_pickup_datetime'] = pd.to_datetime(dados_reais['tpep_pickup_datetime'])
+dados_reais['hora_do_dia'] = dados_reais['tpep_pickup_datetime'].dt.hour
+dados_reais['dia_da_semana'] = dados_reais['tpep_pickup_datetime'].dt.dayofweek
+dados_reais['num_viagens'] = '1'
+dados_reais = dados_reais[dados_reais['dia_da_semana'].between(0, 2)]
 
 features = [
-    'data_do_dia',
     'hora_do_dia',
     'PU_longitude',
     'PU_latitude',
     'DO_longitude',
     'DO_latitude'
 ]
-dados_gmm = dados[features].dropna().sample(frac=1.0)
 
-#Gambiarra para poder treinar as datas do dia
-dados_gmm['data_do_dia'] = pd.to_datetime(dados_gmm['data_do_dia']).apply(lambda x: x.timestamp())
-
+features2 = [
+    'hora_do_dia',
+    'num_viagens',
+    'PU_longitude',
+    'PU_latitude',
+    'DO_longitude',
+    'DO_latitude'
+]
+dados_reais_gmm = dados_reais[features].dropna().sample(frac=1.0)
+dados_reais = dados_reais[features2].dropna().sample(frac=1.0)
 # --------------------------------------------------
 # FUNÇÕES AUXILIARES
 # --------------------------------------------------
@@ -93,9 +100,9 @@ df_resultados = pd.DataFrame(columns=[
 # LOOP PRINCIPAL DE EXPERIMENTOS
 # --------------------------------------------------
 for nc in [25, 30, 35]:
-    # 1) Treinar GMM e gerar dados sintéticos
+    # 1) Treinar GMM e gerar dados_reais sintéticos
     scaler = StandardScaler()
-    train_scaled = scaler.fit_transform(dados_gmm).astype(np.float32)
+    train_scaled = scaler.fit_transform(dados_reais_gmm).astype(np.float32)
 
     gmm = GaussianMixture(
         num_components=nc,
@@ -105,62 +112,39 @@ for nc in [25, 30, 35]:
     )
     gmm.fit(train_scaled)
 
-    synthetic_scaled = gmm.sample(int(len(dados_gmm) * SYNTHETIC_MULTIPLIER)).cpu().numpy()
+    synthetic_scaled = gmm.sample(int(len(dados_reais_gmm) * SYNTHETIC_MULTIPLIER)).cpu().numpy()
     synthetic_df = pd.DataFrame(
         scaler.inverse_transform(synthetic_scaled),
         columns=features
     )
-    #Gambiarra para converter os quebrados de data_do_dia e hora_do_dia 
-    synthetic_df['data_do_dia'] = pd.to_datetime(synthetic_df['data_do_dia'], unit='s').dt.date
-    synthetic_df['hora_do_dia'] = synthetic_df['hora_do_dia'].round().astype(int)
+    synthetic_df['num_viagens'] = '1'
 
-    # 2) Processar dados reais
-    df_real_grouped = (
-        dados[['data_do_dia', 'hora_do_dia']]
-        .groupby(['data_do_dia', 'hora_do_dia'])
-        .size()
-        .reset_index(name='num_viagens')
-    )
-    df_real_grouped['datetime'] = (
-        pd.to_datetime(df_real_grouped['data_do_dia']) 
-        + pd.to_timedelta(df_real_grouped['hora_do_dia'], unit='h')
-    )
-    df_real_grouped = df_real_grouped.sort_values('datetime').reset_index(drop=True)
-
-    # 3) Combinar dados reais + sintéticos
+    #Combinar dados_reais reais + sintéticos
     df_real_plus_sint = pd.concat([
-        df_real_grouped,
-        synthetic_df.groupby(['data_do_dia', 'hora_do_dia']).size().reset_index(name='num_viagens')
-    ]).groupby(['data_do_dia', 'hora_do_dia'], as_index=False)['num_viagens'].sum()
+        dados_reais,
+        synthetic_df])
+    
+    #Aqui converte a lagitude e longitude pra ID de zona dnv e filtra de acordo com a zona passada na função
+    dados_reais = add_location_ids_cupy(df=dados_reais)
+    print("mudança-----------", dados_reais.head())
 
-    df_real_plus_sint['datetime'] = (
-        pd.to_datetime(df_real_plus_sint['data_do_dia'])
-        + pd.to_timedelta(df_real_plus_sint['hora_do_dia'], unit='h')
-    )
-    df_real_plus_sint = df_real_plus_sint.sort_values('datetime').reset_index(drop=True)
+    #Deixa só as colunas importantes pra treinar o dlinear 
+    dados_reais = dados_reais[['hora_do_dia', 'num_viagens']]
+    synthetic_df = synthetic_df[['hora_do_dia', 'num_viagens']]
+    df_real_plus_sint = df_real_plus_sint[['hora_do_dia', 'num_viagens']]
 
-    # 4) Dados estritamente sintéticos
-    df_sint = (
-        synthetic_df.groupby(['data_do_dia', 'hora_do_dia'])
-        .size()
-        .reset_index(name='num_viagens')
-    )
-    df_sint['datetime'] = (
-        pd.to_datetime(df_sint['data_do_dia'])
-        + pd.to_timedelta(df_sint['hora_do_dia'], unit='h')
-    )
-    df_sint = df_sint.sort_values('datetime').reset_index(drop=True)
-
-    # 5) Criar sequências
+    #Criar sequências
     X_real, y_real = create_sequence_dataset(
-        df_real_grouped['num_viagens'].values.astype(float)
+        dados_reais['num_viagens'].values.astype(float)
     )
     X_real_sint, y_real_sint = create_sequence_dataset(
         df_real_plus_sint['num_viagens'].values.astype(float)
     )
     X_sint, y_sint = create_sequence_dataset(
-        df_sint['num_viagens'].values.astype(float)
+        synthetic_df['num_viagens'].values.astype(float)
     )
+    ##Inverter aqui a lógica do converter_lagitude_longitude pra transformar a lagitude e longitude em zonas e filtrar por alguma zona específica
+    #Deixar só dados_reais de hora e num_viagens 
 
     # 6) Transformar em tensores
     X_real_t = torch.tensor(X_real, dtype=torch.float32)
@@ -181,7 +165,7 @@ for nc in [25, 30, 35]:
             seed = torch.seed() 
             torch.manual_seed(seed)
           #  np.random.seed(seed) 
-            # Vamos treinar 3 tipos de dados: real, synthetic, real+synthetic
+            # Vamos treinar 3 tipos de dados_reais: real, synthetic, real+synthetic
             for data_type, (X, y) in zip(
                 ['real', 'synthetic', 'real+synthetic'],
                 [(X_real_t, y_real_t), (X_sint_t, y_sint_t), (X_real_sint_t, y_real_sint_t)]
@@ -272,10 +256,10 @@ for metrica in metricas:
 
             # Inserir as estatísticas de média e mediana para cada tipo
             for tipo_idx, tipo in enumerate(['real', 'synthetic', 'real+synthetic']):
-                dados_tipo = df_sub[df_sub['tipo_dado'] == tipo]['valor']
-                if not dados_tipo.empty:
-                    mediana = dados_tipo.median()
-                    media = dados_tipo.mean()
+                dados_reais_tipo = df_sub[df_sub['tipo_dado'] == tipo]['valor']
+                if not dados_reais_tipo.empty:
+                    mediana = dados_reais_tipo.median()
+                    media = dados_reais_tipo.mean()
 
                     ax.text(
                         tipo_idx, ymin,
