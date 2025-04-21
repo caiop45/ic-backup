@@ -126,7 +126,6 @@ for nc in [25, 30, 35]:
     
     #Aqui converte a lagitude e longitude pra ID de zona dnv e filtra de acordo com a zona passada na função
     dados_reais = add_location_ids_cupy(df=dados_reais)
-    print("mudança-----------", dados_reais.head())
 
     #Deixa só as colunas importantes pra treinar o dlinear 
     dados_reais = dados_reais[['hora_do_dia', 'num_viagens']]
