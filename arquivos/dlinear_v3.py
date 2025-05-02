@@ -18,19 +18,21 @@ import geopandas as gpd
 # --------------------------------------------------
 # CONFIGURAÇÕES INICIAIS
 # --------------------------------------------------
-SYNTHETIC_MULTIPLIER = 5
+SYNTHETIC_MULTIPLIER = 2
 SAVE_DIR = "/home/caioloss/gráficos/linear/"
 os.makedirs(SAVE_DIR, exist_ok=True)
-NUM_EXECUCOES = 10  # Número de execuções com diferentes seeds
+NUM_EXECUCOES = 5
+data_sampler_seed = 30 
 
 # --------------------------------------------------
 # 1) LEITURA E PREPARAÇÃO INICIAL DOS dados_reais REAIS 
 # --------------------------------------------------
 dados_reais = pd.read_parquet('/home-ext/caioloss/Dados/viagens_lat_long.parquet')
+#dados_reais = dados_reais.sample(frac = 0.1)
 dados_reais['tpep_pickup_datetime'] = pd.to_datetime(dados_reais['tpep_pickup_datetime'])
 dados_reais['hora_do_dia'] = dados_reais['tpep_pickup_datetime'].dt.hour
 dados_reais['dia_da_semana'] = dados_reais['tpep_pickup_datetime'].dt.dayofweek
-dados_reais['num_viagens'] = '1'
+dados_reais['num_viagens'] = 1
 dados_reais = dados_reais[dados_reais['dia_da_semana'].between(0, 2)]
 
 features = [
@@ -42,6 +44,7 @@ features = [
 ]
 
 features2 = [
+    'tpep_pickup_datetime',
     'hora_do_dia',
     'num_viagens',
     'PU_longitude',
@@ -49,18 +52,75 @@ features2 = [
     'DO_longitude',
     'DO_latitude'
 ]
-dados_reais_gmm = dados_reais[features].dropna().sample(frac=1.0)
-dados_reais = dados_reais[features2].dropna().sample(frac=1.0)
+dados_reais_gmm = dados_reais[features].dropna()
+dados_reais = dados_reais[features2].dropna()
 # --------------------------------------------------
 # FUNÇÕES AUXILIARES
 # --------------------------------------------------
+
+
+
+def make_date_sampler(df_real: pd.DataFrame,
+                      ts_col: str = "tpep_pickup_datetime",
+                      seed: int | None = None):
+    """
+    Cria um *sampler* que devolve uma data (YYYY-MM-DD) de acordo com a
+    distribuição empírica P(data | hora) observada nos dados reais.
+
+    Parameters
+    ----------
+    df_real : DataFrame
+        Contém a coluna `ts_col` em formato datetime64[ns].
+    ts_col : str, default="tpep_pickup_datetime"
+        Nome da coluna de timestamp completo.
+    seed : int | None
+        Semente para reprodutibilidade (torch.manual_seed já cuida da rede;
+        aqui controlamos apenas a amostragem de datas).
+
+    Returns
+    -------
+    sample_date : callable
+        Função que recebe `hora_do_dia` (int 0-23) e devolve uma
+        `datetime.date` sorteada segundo P(data | hora).
+    """
+    # 1) Quebra o timestamp em partes
+    df = df_real.copy()
+    df["hora"]  = df[ts_col].dt.hour
+    df["data"]  = df[ts_col].dt.normalize()        # zera HH:MM:SS
+    rng = np.random.default_rng(12345)
+
+    # 2) Constrói as tabelas de probabilidade por hora
+    prob_table: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for h, sub in df.groupby("hora"):
+        counts = sub["data"].value_counts().sort_index()
+        dates  = counts.index.to_numpy()           # array de datas
+        probs  = counts.values / counts.values.sum()
+        prob_table[h] = (dates, probs)
+
+    # 3) Closure que amostra usando a tabela pronta
+    def sample_date(hora_do_dia: int):
+        """
+        Devolve uma data coerente com a distribuição P(data|hora).
+        Se a hora não existir na prob_table, retorna 0.
+        """
+        try:
+            dates, probs = prob_table[hora_do_dia]     # KeyError se não existir
+            return rng.choice(dates, p=probs)
+        except KeyError:
+            return 0           #Retorna 0 para entrar como 1970-01-01 e ser filtrado
+
+    return sample_date
 
 #Considera as 4 horas anteriores para poder prever o número de viagens da próxima hora
 def create_sequence_dataset(series_values, window_size=4):
     X, y = [], []
     for i in range(len(series_values) - window_size):
+        print(i)
         X.append(series_values[i:i+window_size])
         y.append(series_values[i+window_size])
+    print(np.array(X))
+    print("---------")
+    print(np.array(y))    
     return np.array(X), np.array(y)
 
 class DLinear(nn.Module):
@@ -71,25 +131,57 @@ class DLinear(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
-def train_model(model, X_train, y_train, X_val, y_val, epochs=50, lr=0.001):
+def train_model(
+    model,
+    X_train, y_train,
+    X_val,   y_val,
+    epochs,
+    lr=1e-3,
+    patience=10,
+    min_delta=1e-4
+):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
+    best_val   = float("inf")   # menor perda já vista
+    best_state = None           # checkpoint dos pesos
+    wait       = 0              # épocas sem melhora
+
     for epoch in range(epochs):
+        # ---------- treino ----------
         model.train()
         optimizer.zero_grad()
-        y_pred = model(X_train)
-        loss = criterion(y_pred, y_train)
+        loss = criterion(model(X_train), y_train)
         loss.backward()
         optimizer.step()
 
+        # ---------- validação ----------
         model.eval()
         with torch.no_grad():
-            y_val_pred = model(X_val)
-            val_loss = criterion(y_val_pred, y_val)
+            val_loss = criterion(model(X_val), y_val)
 
+        # ---------- early stopping ----------
+        if val_loss.item() < best_val - min_delta:
+            best_val   = val_loss.item()
+            best_state = model.state_dict()  # guarda pesos atuais
+            wait = 0
+        else:
+            wait += 1
+            if wait >= patience:
+                print(f"⏹️  Early stopping na época {epoch+1} – "
+                      f"val_loss não melhora há {patience} épocas.")
+                break
+
+        # log a cada 10 épocas (opcional)
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{epochs}] - Loss: {loss.item():.4f} - Val Loss: {val_loss.item():.4f}")
+            #print(f"Epoch {epoch+1:03}/{epochs}  • "
+                  #f"train={loss.item():.4f}  •  val={val_loss.item():.4f}")
+            1 == 1
+
+    # restaura melhores pesos
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
 
 # Dataframe para armazenar resultados
 df_resultados = pd.DataFrame(columns=[
@@ -99,8 +191,11 @@ df_resultados = pd.DataFrame(columns=[
 # --------------------------------------------------
 # LOOP PRINCIPAL DE EXPERIMENTOS
 # --------------------------------------------------
+sample_date = make_date_sampler(dados_reais, seed = data_sampler_seed)  
 for nc in [25, 30, 35]:
-    # 1) Treinar GMM e gerar dados_reais sintéticos
+    dados_reais_copy = dados_reais.copy()
+
+    # 1) Treinar GMM e gerar dados sintéticos
     scaler = StandardScaler()
     train_scaled = scaler.fit_transform(dados_reais_gmm).astype(np.float32)
 
@@ -117,24 +212,81 @@ for nc in [25, 30, 35]:
         scaler.inverse_transform(synthetic_scaled),
         columns=features
     )
-    synthetic_df['num_viagens'] = '1'
+    synthetic_df['num_viagens'] = 1
 
-    #Combinar dados_reais reais + sintéticos
+    ##Tratamentos dados sintéticos
+    synthetic_df = (
+    synthetic_df
+        .assign(hora_do_dia = lambda df: np.floor(pd.to_numeric(df['hora_do_dia'],
+                                                                errors='coerce')).astype(int))
+        .query("hora_do_dia > 0")          # filtra 1–23
+        .reset_index(drop=True)
+)
+    # Gera as datas sintéticas a partir da hora do dia
+    rng = np.random.default_rng(seed = 12345)
+    dates = synthetic_df['hora_do_dia'].astype(int).apply(sample_date)     
+
+    # 1. cria máscara de linhas válidas (date ≠ 0)
+    mask_valid = dates != 0
+
+    # 2. aplica a máscara ao DataFrame e ao próprio vetor
+    synthetic_df = synthetic_df.loc[mask_valid].reset_index(drop=True)
+    dates = dates[mask_valid]
+
+    # 3. monta o timestamp completo (YYYY-MM-DD)
+    synthetic_df['tpep_pickup_datetime'] = pd.to_datetime(dates) 
+    synthetic_df['tpep_pickup_datetime'] =  synthetic_df['tpep_pickup_datetime'].dt.date
+    dados_reais_copy['tpep_pickup_datetime'] = dados_reais_copy['tpep_pickup_datetime'].dt.date
+
+    #Combinar dados_reais_copy reais + sintéticos
     df_real_plus_sint = pd.concat([
-        dados_reais,
+        dados_reais_copy,
         synthetic_df])
     
     #Aqui converte a lagitude e longitude pra ID de zona dnv e filtra de acordo com a zona passada na função
-    dados_reais = add_location_ids_cupy(df=dados_reais)
+    dados_reais_copy = add_location_ids_cupy(df=dados_reais_copy)
+    synthetic_df = add_location_ids_cupy(df=synthetic_df)
 
     #Deixa só as colunas importantes pra treinar o dlinear 
-    dados_reais = dados_reais[['hora_do_dia', 'num_viagens']]
-    synthetic_df = synthetic_df[['hora_do_dia', 'num_viagens']]
-    df_real_plus_sint = df_real_plus_sint[['hora_do_dia', 'num_viagens']]
+    dados_reais_copy = dados_reais_copy[['hora_do_dia', 'tpep_pickup_datetime', 'num_viagens']]
+    synthetic_df = synthetic_df[['hora_do_dia', 'tpep_pickup_datetime', 'num_viagens']]
+    df_real_plus_sint = df_real_plus_sint[['hora_do_dia', 'tpep_pickup_datetime', 'num_viagens']]
+    dados_reais_copy= dados_reais_copy.sort_values(['tpep_pickup_datetime','hora_do_dia']).reset_index(drop=True)
+    synthetic_df= synthetic_df.sort_values(['tpep_pickup_datetime','hora_do_dia']).reset_index(drop=True)
+    df_real_plus_sint =df_real_plus_sint.sort_values(['tpep_pickup_datetime','hora_do_dia']).reset_index(drop=True)
+    # Transformar as duas colunas em string
+    dados_reais_copy['hora_do_dia'] = dados_reais_copy['hora_do_dia'].astype(str)
+    dados_reais_copy['tpep_pickup_datetime'] = dados_reais_copy['tpep_pickup_datetime'].astype(str)
 
-    #Criar sequências
+    synthetic_df['hora_do_dia'] = synthetic_df['hora_do_dia'].astype(str)
+    synthetic_df['tpep_pickup_datetime'] = synthetic_df['tpep_pickup_datetime'].astype(str)
+
+    df_real_plus_sint['hora_do_dia'] = df_real_plus_sint['hora_do_dia'].astype(str)
+    df_real_plus_sint['tpep_pickup_datetime'] = df_real_plus_sint['tpep_pickup_datetime'].astype(str)
+
+    # Agrupar e ordenar para dados_reais_copy
+    dados_reais_copy = (
+        dados_reais_copy
+        .groupby(['hora_do_dia', 'tpep_pickup_datetime'], as_index=False)['num_viagens'].sum()
+        .reset_index(drop=True)
+    )
+    # Faz o groupby hora e data
+    synthetic_df = (
+        synthetic_df
+        .groupby(['hora_do_dia', 'tpep_pickup_datetime'], as_index=False)['num_viagens'].sum()
+        .reset_index(drop=True)
+    )
+    # Faz o groupby hora e data
+    df_real_plus_sint = (
+        df_real_plus_sint
+        .groupby(['hora_do_dia', 'tpep_pickup_datetime'], as_index=False)['num_viagens'].sum()
+        .reset_index(drop=True)
+    )
+
+
+    #Criar sequências para treinar o dlinear
     X_real, y_real = create_sequence_dataset(
-        dados_reais['num_viagens'].values.astype(float)
+        dados_reais_copy['num_viagens'].values.astype(float)
     )
     X_real_sint, y_real_sint = create_sequence_dataset(
         df_real_plus_sint['num_viagens'].values.astype(float)
@@ -142,8 +294,6 @@ for nc in [25, 30, 35]:
     X_sint, y_sint = create_sequence_dataset(
         synthetic_df['num_viagens'].values.astype(float)
     )
-    ##Inverter aqui a lógica do converter_lagitude_longitude pra transformar a lagitude e longitude em zonas e filtrar por alguma zona específica
-    #Deixar só dados_reais de hora e num_viagens 
 
     # 6) Transformar em tensores
     X_real_t = torch.tensor(X_real, dtype=torch.float32)
@@ -158,13 +308,12 @@ for nc in [25, 30, 35]:
     # --------------------------------------------------
     # Loop de epochs e seeds para cada valor de nc
     # --------------------------------------------------
-    for epochs in [50, 100, 150, 200]:
+    for epochs in [100, 150, 200, 300]:
         execucao = 0 
         while execucao < NUM_EXECUCOES:
             seed = torch.seed() 
             torch.manual_seed(seed)
-          #  np.random.seed(seed) 
-            # Vamos treinar 3 tipos de dados_reais: real, synthetic, real+synthetic
+            # Vamos treinar 3 tipos de dados_reais_copy: real, synthetic, real+synthetic
             for data_type, (X, y) in zip(
                 ['real', 'synthetic', 'real+synthetic'],
                 [(X_real_t, y_real_t), (X_sint_t, y_sint_t), (X_real_sint_t, y_real_sint_t)]
@@ -182,8 +331,9 @@ for nc in [25, 30, 35]:
                 #Preve o número de viagens da próxima hora tendo como base o número de viagens das 4 horas anteriores
                 with torch.no_grad():
                     pred = model(X_val).numpy().flatten()
+                   # print("pred =", pred)
                 true = y_val.numpy().flatten()
-
+               # print("true =", true)
                 metrics = {
                     'R²': r2_score(true, pred),
                     'MAE': mean_absolute_error(true, pred),
