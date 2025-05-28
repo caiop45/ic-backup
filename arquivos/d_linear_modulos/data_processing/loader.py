@@ -39,3 +39,51 @@ def load_real_data():
     dados_reais_dlinear_input = df[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
 
     return df, dados_reais_gmm, dados_reais_dlinear_input, hour_counts_dict_real, GMM_FEATURES
+
+def split_dataset_weekly(
+    df: pd.DataFrame,
+    train_frac: float = 0.60,
+    val_frac:   float = 0.20,
+    datetime_col: str = "tpep_pickup_datetime",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Divide um DataFrame temporal em (treino, validação, hold-out) sem
+    quebrar semanas. A divisão é feita no 1º dia útil **anterior** ao
+    ponto-alvo, garantindo proporções próximas às desejadas.
+
+    Parâmetros
+    ----------
+    df : DataFrame já ordenado ou não – será ordenado internamente.
+    train_frac : fração aproximada para treino.
+    val_frac   : fração aproximada para validação.
+    datetime_col : nome da coluna com datas (dtype datetime64).
+
+    Retorna
+    -------
+    (df_train, df_val, df_hold)
+    """
+    # 1) Ordena cronologicamente
+    df = df.sort_values(datetime_col).reset_index(drop=True)
+
+    # 2) Marca a semana ISO (YYYY-WW)
+    iso_week = df[datetime_col].dt.isocalendar()
+    df["_year_week"] = iso_week["year"].astype(str) + "-" + iso_week["week"].astype(str).str.zfill(2)
+
+    # 3) Calcula tamanho cumulativo por semana
+    week_sizes = df.groupby("_year_week").size()
+    total_rows = len(df)
+
+    cum_rows = week_sizes.cumsum()
+    train_weeks = cum_rows[cum_rows / total_rows <= train_frac].index.tolist()
+
+    cum_rows_after_train = cum_rows.loc[~cum_rows.index.isin(train_weeks)]
+    val_weeks = cum_rows_after_train[cum_rows_after_train / total_rows <= train_frac + val_frac].index.tolist()
+
+    hold_weeks = [w for w in week_sizes.index if w not in train_weeks + val_weeks]
+
+    # 4) Constrói os datasets finais
+    df_train = df[df["_year_week"].isin(train_weeks)].drop(columns="_year_week").reset_index(drop=True)
+    df_val   = df[df["_year_week"].isin(val_weeks)].drop(columns="_year_week").reset_index(drop=True)
+    df_hold  = df[df["_year_week"].isin(hold_weeks)].drop(columns="_year_week").reset_index(drop=True)
+
+    return df_train, df_val, df_hold

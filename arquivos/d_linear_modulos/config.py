@@ -8,7 +8,7 @@ SYNTHETIC_MULTIPLIER = 2           # fator de oversample p/ dados sintéticos
 SAVE_DIR             = "/home/caioloss/gráficos/dlinear/"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-NUM_EXECUCOES        = 5
+NUM_EXECUCOES        = 2
 DATA_SAMPLER_SEED    = 35          # seed para o date-sampler
 
 # Ruídos (Código 1)

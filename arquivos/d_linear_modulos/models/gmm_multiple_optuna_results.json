@@ -1,0 +1,28 @@
+{
+  "melhor_bic": -7645587.0,
+  "melhor_params": {
+    "n_components": 46,
+    "covariance_regularization": 0.0009980274958510734,
+    "covariance_type": "diag"
+  },
+  "resultados_todas_as_runs": [
+    {
+      "seed": 191664963,
+      "params": {
+        "n_components": 46,
+        "covariance_regularization": 0.0009980274958510734,
+        "covariance_type": "diag"
+      },
+      "bic": -7645587.0
+    },
+    {
+      "seed": 1662057957,
+      "params": {
+        "n_components": 43,
+        "covariance_regularization": 0.0004184938631429378,
+        "covariance_type": "diag"
+      },
+      "bic": -6035231.0
+    }
+  ]
+}
