@@ -1,14 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Pipeline DLinear (versão condensada com geração de dados do Código 1)
-────────────────────────────────────
-• Gera dados sintéticos via GMM (PyCave) com lógica do Código 1
-• Constrói janelas dia-a-dia com build_pairs_df
-• Aplica ponderação de crescimento (apply_growth_weighting)
-• Treina DLinear e calcula R², MAE, RMSE, MAPE
-  MODIFICADO: datasets 'synthetic' e 'real+synthetic' são validados com dados 'real'.
-• Gera boxplots por métrica com anotações de mediana
-"""
 import os, math, warnings, datetime, json
 import numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns
 import torch, torch.nn as nn, torch.optim as optim
@@ -16,15 +5,15 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from pycave.bayes import GaussianMixture
-# from converter_lagitude_zona_v2 import add_location_ids_cupy # Comentado se não for usado
-# import geopandas as gpd # Comentado se não for usado
+from converter_lagitude_zona_v2 import add_location_ids_cupy # Comentado se não for usado
+import geopandas as gpd # Comentado se não for usado
 
 # --------------------------------------------------
 # CONFIGURAÇÕES INICIAIS
 # --------------------------------------------------
 WINDOW               = 4          # tamanho da janela (nº horas ➜ input DLinear)
 SYNTHETIC_MULTIPLIER = 2          # Equivalente a SYNTH_OVERSAMPLE do Código (1)
-SAVE_DIR             = "/home/caioloss/gráficos/linear_v2_com_logica_cod1_corrigido_valid_real_MAPE_annot/" # Diretório atualizado
+SAVE_DIR             = "/home/caioloss/gráficos/dlinear/" # Diretório atualizado
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 NUM_EXECUCOES  = 5
@@ -380,7 +369,7 @@ if dados_reais_gmm.empty:
 train_scaled_gmm = gmm_scaler.fit_transform(dados_reais_gmm)
 
 
-for nc_gmm_components in [40, 45, 50, 55, 60, 65, 70]: # Reduzido para teste mais rápido
+for nc_gmm_components in [40, 45, 50]: # Reduzido para teste mais rápido
     print(f"\n🔄 Iniciando para GMM nc={nc_gmm_components}")
     
     gmm = GaussianMixture(
