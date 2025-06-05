@@ -4,11 +4,11 @@ import os
 # CONFIGURAÇÕES GERAIS
 # --------------------------------------------------
 WINDOW               = 4           # nº de horas usadas como entrada do DLinear
-SYNTHETIC_MULTIPLIER = 2           # fator de oversample p/ dados sintéticos
+SYNTHETIC_MULTIPLIER = 1           # fator de oversample p/ dados sintéticos
 SAVE_DIR             = "/home/caioloss/gráficos/dlinear/"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-NUM_EXECUCOES        = 2
+NUM_EXECUCOES        = 10
 DATA_SAMPLER_SEED    = 35          # seed para o date-sampler
 
 # Ruídos (Código 1)

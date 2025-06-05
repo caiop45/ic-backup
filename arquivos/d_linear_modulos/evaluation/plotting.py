@@ -2,6 +2,10 @@ import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 from config import SAVE_DIR
+from pathlib import Path
+from typing import Union
+import pandas as pd
+import numpy as np 
 
 def generate_plots(df):
     """
@@ -60,3 +64,71 @@ def generate_plots(df):
                 plt.close()
     except Exception as e:
         print(f"Falha ao gerar MAE vs R²: {e}")
+
+
+def plot_hourly_trip_comparison(
+    real_df: pd.DataFrame,
+    synth_df: pd.DataFrame,
+    run_idx: int,
+    out_dir: Union[str, Path],
+    *,
+    hour_col: str = "hora_do_dia",
+    trips_col: str = "num_viagens",
+    dpi: int = 150,
+) -> None:
+    """
+    Gera e salva um gráfico de barras lado a lado comparando o número total
+    de viagens por hora entre dados reais e sintéticos.
+
+    Parameters
+    ----------
+    real_df : DataFrame
+        DataFrame com colunas `hour_col` e `trips_col` para os dados reais.
+    synth_df : DataFrame
+        DataFrame com colunas `hour_col` e `trips_col` para os dados sintéticos.
+    run_idx : int
+        Índice (1-based) da execução atual — usado no título e no nome do arquivo.
+    out_dir : str ou Path
+        Diretório onde o PNG será salvo.
+    hour_col : str, opcional
+        Nome da coluna que contém a hora do dia (0-23). Default = "hora_do_dia".
+    trips_col : str, opcional
+        Nome da coluna que contém o total de viagens (uma linha = 1 viagem). Default = "num_viagens".
+    dpi : int, opcional
+        Resolução do arquivo salvo.
+    """
+    # soma viagens por hora
+    real_counts = real_df.groupby(hour_col)[trips_col].sum()
+    synth_counts = synth_df.groupby(hour_col)[trips_col].sum()
+
+    # garante todas as 24 h no eixo X
+    horas = np.arange(24)
+    real_vals = real_counts.reindex(horas, fill_value=0).values
+    synth_vals = synth_counts.reindex(horas, fill_value=0).values
+
+    # gráfico
+    largura = 0.4
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(horas - largura / 2, synth_vals, width=largura, label="Sintético")
+    ax.bar(horas + largura / 2, real_vals,  width=largura, label="Real")
+
+    # anotação da diferença percentual
+    max_altura = max(real_vals.max(), synth_vals.max())
+    for h, s_val, r_val in zip(horas, synth_vals, real_vals):
+        texto = "∞%" if r_val == 0 else f"{(s_val - r_val) / r_val * 100:+.1f}%"
+        y_pos = max(s_val, r_val) + 0.05 * max_altura
+        ax.text(h, y_pos, texto, ha="center", va="bottom", fontsize=8)
+
+    ax.set_xticks(horas)
+    ax.set_xlabel("Hora do dia")
+    ax.set_ylabel("Número total de viagens")
+    ax.set_title(f"Comparação de viagens por hora — Execução {run_idx}")
+    ax.legend()
+    plt.tight_layout()
+
+    # salva
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = out_dir / f"viagens_por_hora_run_{run_idx}.png"
+    plt.savefig(fname, dpi=dpi)
+    plt.close(fig)
