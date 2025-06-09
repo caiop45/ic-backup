@@ -9,7 +9,7 @@ from config import (
 )
 from data_processing.loader            import load_real_data, split_dataset_weekly
 from data_processing.gmm_preparer      import scale_features
-from data_processing.dlinear_preparer  import prepare_all_data_for_dlinear, build_pairs_df, apply_growth_weighting
+from data_processing.dlinear_preparer  import prepare_all_data_for_dlinear, build_pairs_df, apply_growth_weighting, preparar_e_agrupar_datasets
 from synthetic_data.date_sampler       import make_date_sampler
 from synthetic_data.generator          import (
     synth_samples_cod1,
@@ -20,15 +20,16 @@ from synthetic_data.generator          import (
 from models.gmm_model import multiple_optuna_runs
 from models.dlinear                    import DLinearModel, train_model
 from evaluation.metrics                import compute_metrics
-from evaluation.plotting               import generate_plots, plot_hourly_trip_comparison, plot_random_pair_heatmaps
+from evaluation.plotting               import generate_plots, plot_hourly_trip_comparison, plot_random_pair_heatmaps, boxplot_model_eval 
 from synthetic_data.min_trips import (
     get_min_daily_trips,
     downsample_to_min_daily,
 )
 from pycave.bayes import GaussianMixture
-from utils.helpers import decode_hour, agrupar_viagens_por_local
+from utils.helpers import decode_hour, agrupar_viagens_por_local, smape
 from utils.zone_id import add_location_ids_cupy
-import matplotlib.pyplot as plt       
+import matplotlib.pyplot as plt      
+from sklearn.metrics import r2_score, mean_absolute_error 
 # ──────────────────────────────────────────────────────────────
 def main() -> None:
     # Seeds globais -------------------------------------------------------------
@@ -108,8 +109,7 @@ def main() -> None:
     dados_reais_temporal_model_val= add_location_ids_cupy(dados_reais_temporal_model_val)
 
     dados_reais_temporal_model_val['tpep_pickup_datetime'] = pd.to_datetime(dados_reais_temporal_model_val['tpep_pickup_datetime']).dt.floor('H')
-    dados_reais_temporal_model_val = agrupar_viagens_por_local(dados_reais_temporal_model_val)
-    print(dados_reais_temporal_model_val.head)
+    #dados_reais_temporal_model_val = agrupar_viagens_por_local(dados_reais_temporal_model_val)
     for run in range(NUM_EXECUCOES):
             #Gera os dados sintéticos
             synth_raw_data  = synth_samples_cod1(gmm, n_synth, gmm_scaler, GMM_FEATURES)
@@ -120,34 +120,28 @@ def main() -> None:
                 pd.to_timedelta(synth_data["hora_do_dia"], unit="h")
             )
             synth_data = synth_data.dropna(subset=["tpep_pickup_datetime"])
-    
-           # breakpoint()
-            hybrid_temporal_model_train = pd.concat([dados_reais_temporal_model_train, synth_data], ignore_index=True)
 
-            #Cria uma coluna de num_viagem para cada zona e agrupa por dia-minuto-ano hora:00:00
-            dados_reais_temporal_model_train['tpep_pickup_datetime'] = pd.to_datetime(dados_reais_temporal_model_train['tpep_pickup_datetime']).dt.floor('H')
-            dados_reais_temporal_model_train_grouped = agrupar_viagens_por_local(dados_reais_temporal_model_train)
-            synth_data_grouped = agrupar_viagens_por_local(synth_data)
-            hybrid_temporal_model_train['tpep_pickup_datetime'] = pd.to_datetime(hybrid_temporal_model_train['tpep_pickup_datetime']).dt.floor('H')
-            hybrid_temporal_model_train_grouped = agrupar_viagens_por_local(hybrid_temporal_model_train)
-            
-          
+
+            hybrid_temporal_model_train_grouped, dados_reais_temporal_model_train_grouped, synth_data_grouped, dados_reais_temporal_model_val = preparar_e_agrupar_datasets(dados_reais = dados_reais_temporal_model_train,
+                                                              dados_sinteticos = synth_data, dados_reais_eval= dados_reais_temporal_model_val)
+
+            breakpoint()
             #Dropa a coluna de dia-minuto-ano hora:00:00
-            dados_reais_temporal_model_train_grouped = dados_reais_temporal_model_train_grouped.assign(
-                hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-            ).drop(columns=["tpep_pickup_datetime"])
+            #dados_reais_temporal_model_train_grouped = dados_reais_temporal_model_train_grouped.assign(
+            #    hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
+            #).drop(columns=["tpep_pickup_datetime"])
 
-            synth_data_grouped = synth_data_grouped.assign(
-                hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-            ).drop(columns=["tpep_pickup_datetime"])
+            #synth_data_grouped = synth_data_grouped.assign(
+          #      hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
+          #  ).drop(columns=["tpep_pickup_datetime"])
 
-            hybrid_temporal_model_train_grouped = hybrid_temporal_model_train_grouped.assign(
-                hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-            ).drop(columns=["tpep_pickup_datetime"])
+          #  hybrid_temporal_model_train_grouped = hybrid_temporal_model_train_grouped.assign(
+          #      hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
+          # ).drop(columns=["tpep_pickup_datetime"])
 
-            dados_reais_temporal_model_val = dados_reais_temporal_model_val.assign(
-                hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-            ).drop(columns=["tpep_pickup_datetime"])
+         #   dados_reais_temporal_model_val = dados_reais_temporal_model_val.assign(
+         #       hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
+         #  ).drop(columns=["tpep_pickup_datetime"])
 
             groups = {
                 "real"          : dados_reais_temporal_model_train_grouped,
@@ -161,7 +155,6 @@ def main() -> None:
             input_window_size=3,
             prediction_horizon=1,
             )
-            #breakpoint()
 
             X_val = processed_data['validation']['X_val']
             y_val = processed_data['validation']['y_val']
@@ -169,9 +162,12 @@ def main() -> None:
             # ===================================================================
             # 3. LOOP DE TREINAMENTO E EXPERIMENTAÇÃO
             # ===================================================================
-            results = {} 
-
-            # Loop sobre as diferentes quantidades de épocas
+            metrics_results = {
+                "Real":            {},
+                "Sintético":       {},
+                "Real + Sintético":{}
+            }
+            metric_names = ["R²", "SMAPE", "MAE"]
             for epochs in [50, 80, 100, 150, 200, 250]:
                 # Loop sobre os diferentes tipos de dados de treino
                 for typ in ["real", "synthetic", "real+synthetic"]:
@@ -185,7 +181,6 @@ def main() -> None:
                     seq_len = X_train.shape[1]
                     input_dim = X_train.shape[2]
                     output_dim = y_train.shape[2]
-                    #breakpoint()
                     # 1. Instancia o modelo
                     dlinear_model = DLinearModel(
                         input_dim=input_dim,
@@ -200,10 +195,45 @@ def main() -> None:
                         X_val=X_val, y_val=y_val,
                         epochs=epochs
                     )
-                    #breakpoint()
-                    # 3. Guarda o resultado final
+
+                    with torch.no_grad():
+                        preds = dlinear_model(X_val).cpu().numpy().flatten()
+                    true_vals = y_val.cpu().numpy().flatten()
+
+                    label_map = {
+                        "real": "Real",
+                        "synthetic": "Sintético",
+                        "real+synthetic": "Real + Sintético",
+                    }
+
+                    lbl = label_map[typ]
+                    metrics_results[lbl]["R²"]    = r2_score(true_vals, preds)
+                    metrics_results[lbl]["SMAPE"] = smape(true_vals, preds)
+                    metrics_results[lbl]["MAE"]   = mean_absolute_error(true_vals, preds)
                     final_val_loss = history['val_loss'][-1]
                     print(f"  > Experimento concluído. Perda final na validação: {final_val_loss:.6f}")
+
+                #Plota o boxplot    
+                if all(len(metrics_results[lbl]) == len(metric_names) for lbl in metrics_results):
+                    suptitle = (
+                        f"Comparação de Desempenho\n"
+                        f"lr={0.001} | epochs={epochs} | seed={seed}"
+                    )
+                    out_path = os.path.join(
+                        "arquivos/d_linear_modulos/save_data/",
+                        f"comparacao_lr_{0.001}_epochs_{epochs}_seed_{seed}.png",
+                    )
+
+                    boxplot_model_eval(
+                        metrics_dict=metrics_results,
+                        metric_names=metric_names,
+                        suptitle=suptitle,
+                        save_path=out_path,
+                    )
+                    print(f"> Figura salva em: {out_path}")
+
+                    # Limpa para a próxima iteração de epochs
+                    metrics_results = {k: {} for k in metrics_results}    
                     
 print("\n--- Treinamento e experimentação concluídos! ---")
 
