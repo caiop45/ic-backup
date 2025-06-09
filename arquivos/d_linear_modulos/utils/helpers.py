@@ -1,6 +1,11 @@
 import numpy as np
 import pandas as pd
 import config
+def quarter_hour_slot(dt_series: pd.Series) -> pd.Series:
+    """Retorna o índice de 15 minutos (0-95) para uma série datetime."""
+    dt = pd.to_datetime(dt_series)
+    return dt.dt.hour * 4 + dt.dt.minute // 15
+
 def decode_hour(sin_s, cos_s):
     """
     Converte seno/cosseno da hora em inteiro de 0-23 h.
@@ -11,8 +16,8 @@ def decode_hour(sin_s, cos_s):
 
 def agrupar_viagens_por_local(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Soma 'num_viagens' por hora, tendo como colunas finais *os nomes de zona*.
-    Se uma zona do CSV não aparecer no df, a coluna é criada com zeros.
+     Soma 'num_viagens' por intervalo de 15 minutos, tendo como colunas finais
+    *os nomes de zona*.
 
     Parâmetros
     ----------
@@ -34,6 +39,7 @@ def agrupar_viagens_por_local(df: pd.DataFrame) -> pd.DataFrame:
     # --------------------------------------------------------------------
     df = df.copy()
     df = df.dropna(subset=["PULocationID"])
+    df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"]).dt.floor("15min")
     # 1. Verifica se todas as zonas do df estão mapeadas no CSV
     zonas_df = set(df["PULocationID"].unique())
     zonas_desconhecidas = zonas_df - _EXPECTED_SET
@@ -50,6 +56,13 @@ def agrupar_viagens_por_local(df: pd.DataFrame) -> pd.DataFrame:
         columns="PULocationID",
         aggfunc="sum",
     )
+    full_range = pd.date_range(
+        start=pivot_df.index.min(),
+        end=pivot_df.index.max(),
+        freq="15min",
+        name=pivot_df.index.name,
+    )
+    pivot_df = pivot_df.reindex(full_range, fill_value=0)
 
     # 3. Garante todas as zonas do CSV como colunas
     #    e zera qualquer NaN remanescente

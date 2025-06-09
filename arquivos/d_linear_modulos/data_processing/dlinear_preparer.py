@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from config import WINDOW
 import torch
-from utils.helpers import agrupar_viagens_por_local
+from utils.helpers import agrupar_viagens_por_local, quarter_hour_slot
 
 # ---------- pré-agregação ---------- #
 def _prep(df0: pd.DataFrame):
@@ -12,11 +12,15 @@ def _prep(df0: pd.DataFrame):
     df = df0[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
     df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
     df["data_normalizada"]     = df["tpep_pickup_datetime"].dt.normalize()
+    df["hora_do_dia"] = quarter_hour_slot(df["tpep_pickup_datetime"]) 
 
-    grp = (df.groupby(["data_normalizada", "hora_do_dia"], as_index=False)
-             .agg(num_viagens=("num_viagens", "sum")))
+    grp = (
+        df.groupby(["data_normalizada", "hora_do_dia"], as_index=False)
+          .agg(num_viagens=("num_viagens", "sum"))
+    )
 
-    grp["tpep_pickup_datetime"] = grp["data_normalizada"] + pd.to_timedelta(grp["hora_do_dia"], unit="h")
+    grp["tpep_pickup_datetime"] = grp["data_normalizada"] + pd.to_timedelta(grp["hora_do_dia"] * 15, unit="m")
+
     return grp[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]]
 
 # ---------- pares entrada-alvo ---------- #
@@ -186,9 +190,15 @@ def preparar_e_agrupar_datasets(
     dados_reais_copy = dados_reais.copy()
     dados_sinteticos_copy = dados_sinteticos.copy()
 
-    dados_reais_copy['tpep_pickup_datetime'] = pd.to_datetime(dados_reais_copy['tpep_pickup_datetime']).dt.floor('H')
-    dados_sinteticos_copy['tpep_pickup_datetime'] = pd.to_datetime(dados_sinteticos_copy['tpep_pickup_datetime']).dt.floor('H')
-    dados_reais_eval['tpep_pickup_datetime'] = pd.to_datetime(dados_reais_eval['tpep_pickup_datetime']).dt.floor('H')
+    dados_reais_copy['tpep_pickup_datetime'] = pd.to_datetime(
+        dados_reais_copy['tpep_pickup_datetime']
+    ).dt.floor('15min')
+    dados_sinteticos_copy['tpep_pickup_datetime'] = pd.to_datetime(
+        dados_sinteticos_copy['tpep_pickup_datetime']
+    ).dt.floor('15min')
+    dados_reais_eval['tpep_pickup_datetime'] = pd.to_datetime(
+        dados_reais_eval['tpep_pickup_datetime']
+    ).dt.floor('15min')
 
     # 1. Cria o DataFrame híbrido combinando os dados reais e sintéticos
     dados_hibridos = pd.concat([dados_reais_copy, dados_sinteticos_copy], ignore_index=True)
@@ -200,9 +210,9 @@ def preparar_e_agrupar_datasets(
     dados_eval_grouped = agrupar_viagens_por_local(dados_reais_eval)
 
     def transformar_coluna_data(df: pd.DataFrame) -> pd.DataFrame:
-        """Extrai a hora da coluna de timestamp e remove a coluna original."""
-        return df.assign(
-            hora_do_dia=lambda df_interno: pd.to_datetime(df_interno["tpep_pickup_datetime"]).dt.hour
+         """Converte o timestamp em índice de 15 minutos (0-95) e remove o timestamp."""
+         return df.assign(
+            hora_do_dia=lambda df_interno: quarter_hour_slot(df_interno["tpep_pickup_datetime"])
         ).drop(columns=["tpep_pickup_datetime"])
 
     # 4. Aplica a transformação aos três DataFrames agrupados

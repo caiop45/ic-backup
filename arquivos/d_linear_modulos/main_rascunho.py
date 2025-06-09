@@ -107,17 +107,20 @@ def main() -> None:
     dados_reais_gmm_train = add_location_ids_cupy(dados_reais_gmm_train)
     dados_reais_temporal_model_train = add_location_ids_cupy(dados_reais_temporal_model_train)
     dados_reais_temporal_model_val= add_location_ids_cupy(dados_reais_temporal_model_val)
-
-    dados_reais_temporal_model_val['tpep_pickup_datetime'] = pd.to_datetime(dados_reais_temporal_model_val['tpep_pickup_datetime']).dt.floor('H')
+    dados_reais_temporal_model_val['tpep_pickup_datetime'] = pd.to_datetime(
+        dados_reais_temporal_model_val['tpep_pickup_datetime']
+    ).dt.floor('15min')
     #dados_reais_temporal_model_val = agrupar_viagens_por_local(dados_reais_temporal_model_val)
     for run in range(NUM_EXECUCOES):
             #Gera os dados sintéticos
             synth_raw_data  = synth_samples_cod1(gmm, n_synth, gmm_scaler, GMM_FEATURES)
             synth_raw_data = add_location_ids_cupy(synth_raw_data)
             synth_data = synth_raw_data
+            minute_offsets = rng.integers(0, 4, size=len(synth_data)) * 15
             synth_data["tpep_pickup_datetime"] = (
-                synth_data["hora_do_dia"].apply(sample_date) +
-                pd.to_timedelta(synth_data["hora_do_dia"], unit="h")
+                synth_data["hora_do_dia"].apply(sample_date)
+                + pd.to_timedelta(synth_data["hora_do_dia"], unit="h")
+                + pd.to_timedelta(minute_offsets, unit="m")
             )
             synth_data = synth_data.dropna(subset=["tpep_pickup_datetime"])
 
@@ -125,24 +128,7 @@ def main() -> None:
             hybrid_temporal_model_train_grouped, dados_reais_temporal_model_train_grouped, synth_data_grouped, dados_reais_temporal_model_val = preparar_e_agrupar_datasets(dados_reais = dados_reais_temporal_model_train,
                                                               dados_sinteticos = synth_data, dados_reais_eval= dados_reais_temporal_model_val)
 
-            breakpoint()
-            #Dropa a coluna de dia-minuto-ano hora:00:00
-            #dados_reais_temporal_model_train_grouped = dados_reais_temporal_model_train_grouped.assign(
-            #    hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-            #).drop(columns=["tpep_pickup_datetime"])
-
-            #synth_data_grouped = synth_data_grouped.assign(
-          #      hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-          #  ).drop(columns=["tpep_pickup_datetime"])
-
-          #  hybrid_temporal_model_train_grouped = hybrid_temporal_model_train_grouped.assign(
-          #      hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-          # ).drop(columns=["tpep_pickup_datetime"])
-
-         #   dados_reais_temporal_model_val = dados_reais_temporal_model_val.assign(
-         #       hora_do_dia=lambda df: pd.to_datetime(df["tpep_pickup_datetime"]).dt.hour
-         #  ).drop(columns=["tpep_pickup_datetime"])
-
+            #breakpoint()
             groups = {
                 "real"          : dados_reais_temporal_model_train_grouped,
                 "synthetic"     : synth_data_grouped,
@@ -152,7 +138,7 @@ def main() -> None:
             processed_data = prepare_all_data_for_dlinear(
             training_groups=groups,
             validation_df=dados_reais_temporal_model_val,
-            input_window_size=3,
+            input_window_size=8,
             prediction_horizon=1,
             )
 
