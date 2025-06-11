@@ -88,7 +88,7 @@ def train_model(
         epoch_train_loss = 0.0
         for X_batch, y_batch in train_loader:
             # Envia os dados do lote para o dispositivo
-            X_batch, y_batch = X_batch, y_batch
+            X_batch, y_batch = X_batch.to('cuda:0'), y_batch.to('cuda:0')
             
             optimizer.zero_grad()       # Zera os gradientes
             y_pred = model(X_batch)     # Forward pass: faz a predição
@@ -103,7 +103,7 @@ def train_model(
         epoch_val_loss = 0.0
         with torch.no_grad(): # Desabilita o cálculo de gradientes para validação
             for X_batch, y_batch in val_loader:
-                X_batch, y_batch = X_batch, y_batch
+                X_batch, y_batch = X_batch.to('cuda:0'), y_batch.to('cuda:0')
                 y_pred = model(X_batch)
                 loss = loss_fn(y_pred, y_batch)
                 epoch_val_loss += loss.item()

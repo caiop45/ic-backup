@@ -18,7 +18,7 @@ from synthetic_data.generator          import (
     adjust_counts_by_group
 )
 from models.gmm_model import multiple_optuna_runs
-from models.dlinear                    import DLinearModel, train_model
+from models import DLinearModel, train_model, optimize_dlinear
 from evaluation.metrics                import compute_metrics
 from evaluation.plotting               import generate_plots, plot_hourly_trip_comparison, plot_random_pair_heatmaps, boxplot_model_eval 
 from synthetic_data.min_trips import (
@@ -154,72 +154,83 @@ def main() -> None:
                 "Real + Sintético":{}
             }
             metric_names = ["R²", "SMAPE", "MAE"]
-            for epochs in [50, 80, 100, 150, 200, 250]:
-                # Loop sobre os diferentes tipos de dados de treino
-                for typ in ["real", "synthetic", "real+synthetic"]:
-                    
-                    print(f"\n--- INICIANDO TREINO: {epochs} épocas | Dados: '{typ}' ---")
-                    
-                    # Pega os tensores de treino JÁ PRONTOS do dicionário
-                    X_train = processed_data[typ]['X_train']
-                    y_train = processed_data[typ]['y_train']
-                    
-                    seq_len = X_train.shape[1]
-                    input_dim = X_train.shape[2]
-                    output_dim = y_train.shape[2]
-                    # 1. Instancia o modelo
-                    dlinear_model = DLinearModel(
-                        input_dim=input_dim,
-                        output_dim=output_dim,
-                        seq_len=seq_len
-                    ) 
-                    
-                    # 2. Chama a função de treino modularizada
-                    history = train_model(
-                        model=dlinear_model,
-                        X_train=X_train, y_train=y_train,
-                        X_val=X_val, y_val=y_val,
-                        epochs=epochs
-                    )
+            for typ in ["real", "synthetic", "real+synthetic"]:
+                print(f"\n--- Buscando hiperparâmetros para dados: '{typ}' ---")
 
-                    with torch.no_grad():
-                        preds = dlinear_model(X_val).cpu().numpy().flatten()
-                    true_vals = y_val.cpu().numpy().flatten()
+                X_train = processed_data[typ]['X_train']
+                y_train = processed_data[typ]['y_train']
 
-                    label_map = {
-                        "real": "Real",
-                        "synthetic": "Sintético",
-                        "real+synthetic": "Real + Sintético",
-                    }
+                seq_len = X_train.shape[1]
+                input_dim = X_train.shape[2]
+                output_dim = y_train.shape[2]
 
-                    lbl = label_map[typ]
-                    metrics_results[lbl]["R²"]    = r2_score(true_vals, preds)
-                    metrics_results[lbl]["SMAPE"] = smape(true_vals, preds)
-                    metrics_results[lbl]["MAE"]   = mean_absolute_error(true_vals, preds)
-                    final_val_loss = history['val_loss'][-1]
-                    print(f"  > Experimento concluído. Perda final na validação: {final_val_loss:.6f}")
+                study = optimize_dlinear(
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_val=X_val,
+                    y_val=y_val,
+                    input_dim=input_dim,
+                    output_dim=output_dim,
+                    seq_len=seq_len,
+                    n_trials=10,
+                    seed=seed,
+                )
 
-                #Plota o boxplot    
-                if all(len(metrics_results[lbl]) == len(metric_names) for lbl in metrics_results):
-                    suptitle = (
-                        f"Comparação de Desempenho\n"
-                        f"lr={0.001} | epochs={epochs} | seed={seed}"
-                    )
-                    out_path = os.path.join(
-                        "arquivos/d_linear_modulos/save_data/",
-                        f"comparacao_lr_{0.001}_epochs_{epochs}_seed_{seed}.png",
-                    )
+                best = study.best_trials[0]
+                params = best.params
 
-                    boxplot_model_eval(
-                        metrics_dict=metrics_results,
-                        metric_names=metric_names,
-                        suptitle=suptitle,
-                        save_path=out_path,
-                    )
-                    print(f"> Figura salva em: {out_path}")
+                model = DLinearModel(
+                    input_dim=input_dim,
+                    output_dim=output_dim,
+                    seq_len=seq_len,
+                )
 
-                    # Limpa para a próxima iteração de epochs
-                    metrics_results = {k: {} for k in metrics_results}    
+                history = train_model(
+                    model=model,
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_val=X_val,
+                    y_val=y_val,
+                    epochs=params["epochs"],
+                    learning_rate=params["learning_rate"],
+                    batch_size=params["batch_size"],
+                )
+
+                with torch.no_grad():
+                    preds = model(X_val).cpu().numpy().flatten()
+                true_vals = y_val.cpu().numpy().flatten()
+
+                label_map = {
+                    "real": "Real",
+                    "synthetic": "Sintético",
+                    "real+synthetic": "Real + Sintético",
+                }
+
+                lbl = label_map[typ]
+                metrics_results[lbl]["R²"]    = r2_score(true_vals, preds)
+                metrics_results[lbl]["SMAPE"] = smape(true_vals, preds)
+                metrics_results[lbl]["MAE"]   = mean_absolute_error(true_vals, preds)
+                final_val_loss = history['val_loss'][-1]
+                print(
+                    f"  > Melhor trial: {params} | Val Loss: {final_val_loss:.6f}"
+                )
+
+            if all(len(metrics_results[lbl]) == len(metric_names) for lbl in metrics_results):
+                suptitle = f"Comparação de Desempenho\nseed={seed}"
+                out_path = os.path.join(
+                    "arquivos/d_linear_modulos/save_data/",
+                    f"comparacao_optuna_seed_{seed}.png",
+                )
+
+                boxplot_model_eval(
+                    metrics_dict=metrics_results,
+                    metric_names=metric_names,
+                    suptitle=suptitle,
+                    save_path=out_path,
+                )
+                print(f"> Figura salva em: {out_path}")
+
+                metrics_results = {k: {} for k in metrics_results}
                     
 print("\n--- Treinamento e experimentação concluídos! ---")
 

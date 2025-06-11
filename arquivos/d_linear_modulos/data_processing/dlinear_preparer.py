@@ -93,6 +93,7 @@ def _create_windows(df: pd.DataFrame, input_window_size: int, prediction_horizon
     """
     Função auxiliar que transforma um DataFrame em janelas (X, y) já como tensores do PyTorch.
     """
+    device = torch.device('cuda:0')
     target_cols = [col for col in df.columns if col != 'hora_do_dia']
     
     X_list, y_list = [], []
@@ -125,7 +126,7 @@ def prepare_all_data_for_dlinear(
     validation_df: pd.DataFrame, 
     input_window_size: int = 3, 
     prediction_horizon: int = 1,
-    device: torch.device = torch.device('cpu')
+    device: torch.device = torch.device('cuda:0')
     ):
     """
     Prepara todos os dados para o modelo Dlinear, retornando tensores do PyTorch.
