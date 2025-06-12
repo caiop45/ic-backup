@@ -35,7 +35,7 @@ def main() -> None:
     # Seeds globais -------------------------------------------------------------
     torch.manual_seed(42)
     np.random.seed(42)
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # ───────────────────────────────────────────────────────────────────────────
     #@Upload Taxi Trip data
     (
@@ -122,9 +122,9 @@ def main() -> None:
                 + pd.to_timedelta(synth_data["hora_do_dia"], unit="h")
                 + pd.to_timedelta(minute_offsets, unit="m")
             )
+            synth_data = synth_data.sort_values("tpep_pickup_datetime").reset_index(drop=True)
             synth_data = synth_data.dropna(subset=["tpep_pickup_datetime"])
-
-
+           
             hybrid_temporal_model_train_grouped, dados_reais_temporal_model_train_grouped, synth_data_grouped, dados_reais_temporal_model_val = preparar_e_agrupar_datasets(dados_reais = dados_reais_temporal_model_train,
                                                               dados_sinteticos = synth_data, dados_reais_eval= dados_reais_temporal_model_val)
 
@@ -172,18 +172,21 @@ def main() -> None:
                     input_dim=input_dim,
                     output_dim=output_dim,
                     seq_len=seq_len,
-                    n_trials=10,
+                    n_trials=30,
                     seed=seed,
                 )
 
                 best = study.best_trials[0]
                 params = best.params
 
-                model = DLinearModel(
-                    input_dim=input_dim,
-                    output_dim=output_dim,
-                    seq_len=seq_len,
+                model = (
+                    DLinearModel(
+                        input_dim=input_dim,
+                        output_dim=output_dim,
+                        seq_len=seq_len,
+                    ).to(device)
                 )
+
 
                 history = train_model(
                     model=model,
@@ -193,11 +196,12 @@ def main() -> None:
                     y_val=y_val,
                     epochs=params["epochs"],
                     learning_rate=params["learning_rate"],
-                    batch_size=params["batch_size"],
+                    batch_size=params["batch_size"]
+                    #device=device,
                 )
 
                 with torch.no_grad():
-                    preds = model(X_val).cpu().numpy().flatten()
+                    preds = model(X_val.to(device)).cpu().numpy().flatten()
                 true_vals = y_val.cpu().numpy().flatten()
 
                 label_map = {

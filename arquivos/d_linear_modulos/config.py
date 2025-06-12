@@ -8,8 +8,8 @@ SYNTHETIC_MULTIPLIER = 1           # fator de oversample p/ dados sintéticos
 SAVE_DIR             = "/home/caioloss/arquivos/d_linear_modulos/save_data"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-NUM_EXECUCOES        = 10
-DATA_SAMPLER_SEED    = 35          # seed para o date-sampler
+NUM_EXECUCOES        = 1
+DATA_SAMPLER_SEED    = 23         # seed para o date-sampler
 
 # Ruídos (Código 1)
 COUNT_NOISE_FRAC     = 0.05        # ±5 % na contagem/hora

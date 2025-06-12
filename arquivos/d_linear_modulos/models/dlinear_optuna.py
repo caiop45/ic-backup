@@ -31,7 +31,7 @@ def optimize_dlinear(
         batch = trial.suggest_int("batch_size", 32, 128, step=32)
         epochs = trial.suggest_int("epochs", 50, 400, step=50)
 
-        model = DLinearModel(input_dim=input_dim, output_dim=output_dim, seq_len=seq_len)
+        model = DLinearModel(input_dim=input_dim, output_dim=output_dim, seq_len=seq_len).to(device)
         
         # 2. Passe o 'device' para a função de treino
         train_model(
@@ -42,14 +42,15 @@ def optimize_dlinear(
             y_val,
             epochs=epochs,
             learning_rate=lr,
-            batch_size=batch,
+            batch_size=batch
+           # device=device
         )
 
         # Após o treino, o modelo já está no 'device' correto.
         # Agora, para fazer a predição, os dados também precisam estar lá.
         with torch.no_grad():
             # 3. Mova os dados de validação para o mesmo dispositivo do modelo
-            pred_tensor = model(X_val.to(device)) # <--- ALTERAÇÃO IMPORTANTE
+            pred_tensor = model(X_val.to(device))
             
             # Mova os resultados de volta para a CPU para usar com NumPy/Scikit-learn
             pred = pred_tensor.squeeze().cpu().numpy()
