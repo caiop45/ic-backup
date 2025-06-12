@@ -4,7 +4,7 @@ import os
 # CONFIGURAÇÕES GERAIS
 # --------------------------------------------------
 WINDOW               = 4           # nº de horas usadas como entrada do DLinear
-SYNTHETIC_MULTIPLIER = 1           # fator de oversample p/ dados sintéticos
+SYNTHETIC_MULTIPLIER = 5           # fator de oversample p/ dados sintéticos
 SAVE_DIR             = "/home/caioloss/arquivos/d_linear_modulos/save_data"
 os.makedirs(SAVE_DIR, exist_ok=True)
 

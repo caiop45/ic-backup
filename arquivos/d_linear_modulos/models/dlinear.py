@@ -1,40 +1,79 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 import time
 
 # -------------------------------------------
-# 1. IMPLEMENTAÇÃO DO MODELO DLINEAR
+# 1. IMPLEMENTAÇÃO COMPLETA DO DLINEAR
 # -------------------------------------------
-class DLinearModel(nn.Module):
-    """
-    Uma implementação simplificada do modelo DLinear.
-    Ele usa uma única camada linear para mapear a sequência de entrada para a saída de previsão.
-    """
-    def __init__(self, input_dim: int, output_dim: int, seq_len: int):
-        super(DLinearModel, self).__init__()
-        self.seq_len = seq_len
-        
-        # A camada linear mapeia a entrada achatada (features * tempo) para a saída desejada
-        self.linear = nn.Linear(seq_len * input_dim, output_dim)
+
+class _MovingAverage(nn.Module):
+    def __init__(self, kernel_size: int):
+        super().__init__()
+        weight = torch.ones(1, 1, kernel_size) / kernel_size
+        self.register_buffer("weight", weight, persistent=False)
+        self.kernel_size = kernel_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x entra com shape: [batch_size, seq_len, input_dim]
-        
-        # 1. Achata a entrada para o formato [batch_size, seq_len * input_dim]
-        x = x.view(x.size(0), -1)
-        
-        # 2. Passa pela camada linear
-        x = self.linear(x)
-        
-        # 3. Adiciona uma dimensão para corresponder ao shape da saída y: [batch_size, 1, output_dim]
-        x = x.unsqueeze(1)
-        
-        return x
+        pad = (self.kernel_size - 1) // 2
+        x_padded = F.pad(x, (pad, pad), mode="replicate")
+        return F.conv1d(x_padded, self.weight.expand(x.size(1), -1, -1),
+                        groups=x.size(1))
+
+
+class _SeriesDecomposition(nn.Module):
+    def __init__(self, kernel_size: int):
+        super().__init__()
+        self.moving_avg = _MovingAverage(kernel_size)
+
+    def forward(self, x: torch.Tensor):
+        trend = self.moving_avg(x)
+        seasonal = x - trend
+        return seasonal, trend
+
+
+class DLinearModel(nn.Module):
+    def __init__(self,
+                 input_dim: int,
+                 output_dim: int,
+                 seq_len: int,
+                 kernel_size: int = 25):
+        super().__init__()
+        self.seq_len = seq_len
+        self.output_dim = output_dim
+
+        self.decomp = _SeriesDecomposition(kernel_size)
+        self.linear_seasonal = nn.Linear(seq_len, output_dim)
+        self.linear_trend = nn.Linear(seq_len, output_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, seq_len, input_dim] -> [B, C, L]
+        x = x.permute(0, 2, 1).contiguous()
+        seasonal, trend = self.decomp(x)
+
+        B, C, L = seasonal.shape
+        seasonal = seasonal.reshape(B * C, L)
+        trend = trend.reshape(B * C, L)
+
+        out_seasonal = self.linear_seasonal(seasonal).reshape(B, C, self.output_dim)
+        out_trend = self.linear_trend(trend).reshape(B, C, self.output_dim)
+
+        out = out_seasonal + out_trend          # [B, C, output_dim]
+
+        # Se multivariado, devolve média sobre canais;
+        # ajuste conforme seu alvo (e.g. selecionar um canal específico)
+        if C > 1:
+            out = out.mean(dim=1, keepdim=True) # [B, 1, output_dim]
+
+        return out                              # shape compatível c/ y
+
 
 # -------------------------------------------
 # 2. FUNÇÃO DE TREINAMENTO MODULARIZADA
+#    (EXATAMENTE a que você já tinha)
 # -------------------------------------------
+
 def train_model(
     model: nn.Module,
     X_train: torch.Tensor,
@@ -45,80 +84,61 @@ def train_model(
     learning_rate: float = 1e-3,
     batch_size: int = 64
     ):
-    """
-    Função genérica para treinar e validar um modelo PyTorch.
 
-    Args:
-        model (nn.Module): A instância do modelo a ser treinado.
-        X_train, y_train: Tensores com os dados de treino.
-        X_val, y_val: Tensores com os dados de validação.
-        epochs (int): Número de épocas para o treino.
-        device (torch.device): Dispositivo ('cpu' ou 'cuda') para o treino.
-        learning_rate (float): Taxa de aprendizado para o otimizador.
-        batch_size (int): Tamanho do lote para o treino.
-
-    Returns:
-        dict: Um dicionário com o histórico de perdas de treino e validação.
-    """
-    
-    # Define a função de perda (erro quadrático médio, bom para regressão)
     loss_fn = nn.MSELoss()
-    # Define o otimizador (Adam é uma escolha robusta)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    
-    # Cria DataLoaders para gerenciar os lotes (batches) de forma eficiente
-    train_dataset = TensorDataset(X_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    
-    val_dataset = TensorDataset(X_val, y_val)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    
-    history = {
-        'train_loss': [],
-        'val_loss': []
-    }
-    
-    print(f"  Iniciando treino com {len(train_dataset)} amostras. Validando com {len(val_dataset)} amostras.")
-    
+
+    train_loader = DataLoader(TensorDataset(X_train, y_train),
+                              batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val),
+                            batch_size=batch_size, shuffle=False)
+
+    history = {'train_loss': [], 'val_loss': []}
+
+    print(f"Iniciando treino com {len(train_loader.dataset)} amostras. "
+          f"Validando com {len(val_loader.dataset)} amostras.")
+
     for epoch in range(epochs):
         start_time = time.time()
-        
-        # --- TREINO ---
-        model.train() # Coloca o modelo em modo de treino
-        epoch_train_loss = 0.0
-        for X_batch, y_batch in train_loader:
-            # Envia os dados do lote para o dispositivo
-            X_batch, y_batch = X_batch.to('cuda:0'), y_batch.to('cuda:0')
-            
-            optimizer.zero_grad()       # Zera os gradientes
-            y_pred = model(X_batch)     # Forward pass: faz a predição
-            loss = loss_fn(y_pred, y_batch) # Calcula a perda
-            loss.backward()             # Backward pass: calcula os gradientes
-            optimizer.step()            # Atualiza os pesos do modelo
-            
-            epoch_train_loss += loss.item()
-        
-        # --- VALIDAÇÃO ---
-        model.eval() # Coloca o modelo em modo de avaliação
-        epoch_val_loss = 0.0
-        with torch.no_grad(): # Desabilita o cálculo de gradientes para validação
-            for X_batch, y_batch in val_loader:
-                X_batch, y_batch = X_batch.to('cuda:0'), y_batch.to('cuda:0')
-                y_pred = model(X_batch)
-                loss = loss_fn(y_pred, y_batch)
-                epoch_val_loss += loss.item()
 
-        # Calcula a perda média da época
-        avg_train_loss = epoch_train_loss / len(train_loader)
-        avg_val_loss = epoch_val_loss / len(val_loader)
-        
-        history['train_loss'].append(avg_train_loss)
-        history['val_loss'].append(avg_val_loss)
-        
-        epoch_time = time.time() - start_time
-        
-        # Imprime o progresso a cada 10 épocas ou na última
-        if (epoch + 1) % 10 == 0 or (epoch + 1) == epochs:
-            print(f"    Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Time: {epoch_time:.2f}s")
-            
+        # ---------- TREINO ----------
+        model.train()
+        train_loss = 0.0
+        for xb, yb in train_loader:
+            xb, yb = xb.to('cuda:0'), yb.to('cuda:0')
+            optimizer.zero_grad()
+            pred = model(xb)
+            loss = loss_fn(pred, yb)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+
+        # ---------- VALIDAÇÃO ----------
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for xb, yb in val_loader:
+                xb, yb = xb.to('cuda:0'), yb.to('cuda:0')
+                pred = model(xb)
+                val_loss += loss_fn(pred, yb).item()
+
+        history['train_loss'].append(train_loss / len(train_loader))
+        history['val_loss'].append(val_loss / len(val_loader))
+
+        if (epoch + 1) % 10 == 0 or epoch + 1 == epochs:
+            print(f"Epoch [{epoch+1:>3}/{epochs}] "
+                  f"| Train: {history['train_loss'][-1]:.6f} "
+                  f"| Val: {history['val_loss'][-1]:.6f} "
+                  f"| Δt: {time.time() - start_time:.2f}s")
+
     return history
+
+
+# ------------------------------------------------------------------
+# EXEMPLO DE USO (mantém sua chamada original)
+# ------------------------------------------------------------------
+# model = DLinearModel(input_dim=X_train.shape[2],
+#                      output_dim=y_train.shape[2],
+#                      seq_len=X_train.shape[1]).to('cuda:0')
+# history = train_model(model, X_train, y_train, X_val, y_val,
+#                       epochs=100, learning_rate=1e-3, batch_size=64)

@@ -172,7 +172,7 @@ def main() -> None:
                     input_dim=input_dim,
                     output_dim=output_dim,
                     seq_len=seq_len,
-                    n_trials=30,
+                    n_trials=20,
                     seed=seed,
                 )
 
