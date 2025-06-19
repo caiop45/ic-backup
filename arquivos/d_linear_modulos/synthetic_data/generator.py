@@ -1,14 +1,14 @@
 import numpy as np
 import pandas as pd
 from config import COUNT_NOISE_FRAC, COORD_SIGMA_DEG
-from utils.helpers import decode_hour
+from utils.helpers import decode_hour, decode_hour_synth
 from typing import Sequence
 
 # ---------- amostragem do GMM ---------- #
 def synth_samples_cod1(gmm, n_samples, scaler, feature_names):
     synth_scaled = gmm.sample(n_samples).cpu().numpy()
     df = pd.DataFrame(scaler.inverse_transform(synth_scaled), columns=feature_names)
-    df["hora_do_dia"] = decode_hour(df["sin_hr"], df["cos_hr"])
+    df["hora_do_dia"] = decode_hour_synth(df["sin_hr"], df["cos_hr"])
     df["num_viagens"] = 1
     return df
 

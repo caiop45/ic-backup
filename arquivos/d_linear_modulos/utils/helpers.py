@@ -6,6 +6,7 @@ def quarter_hour_slot(dt_series: pd.Series) -> pd.Series:
     dt = pd.to_datetime(dt_series)
     return dt.dt.hour * 4 + dt.dt.minute // 15
 
+#Retorna apenas hora
 def decode_hour(sin_s, cos_s):
     """
     Converte seno/cosseno da hora em inteiro de 0-23 h.
@@ -13,7 +14,28 @@ def decode_hour(sin_s, cos_s):
     ang = np.mod(np.arctan2(sin_s, cos_s), 2 * np.pi)
     return np.rint(ang * 24 / (2 * np.pi)).astype(int) % 24
 
+#Retorna hora:minuto(15min intervalo)
 
+def decode_hour_synth(sin_s, cos_s):
+    """
+    Converte seno/cosseno da hora em timestamps pandas (dtype datetime64[ns])
+    ancorados em 1970-01-01 HH:MM:00, sempre arredondando
+    para o intervalo de 15 min imediatamente inferior.
+    """
+    # 1. Ângulo ∈ [0, 2π)
+    ang = np.mod(np.arctan2(sin_s, cos_s), 2 * np.pi)
+
+    # 2. Minutos decimais no dia (0-1440)
+    total_minutes = ang * (24 * 60) / (2 * np.pi)
+
+    # 3. Piso para o múltiplo de 15 min mais próximo
+    floored_minutes = (total_minutes // 15) * 15         # já arredonda para baixo
+    floored_minutes = floored_minutes.astype(int)        # converte p/ int64
+
+    # 4. Converte p/ datetime64[ns]
+    #    origin='unix' => 1970-01-01 00:00; unit='m' => deslocamento em minutos
+    return pd.to_datetime(floored_minutes, unit='m', origin='unix')
+  
 def agrupar_viagens_por_local(df: pd.DataFrame) -> pd.DataFrame:
     """
      Soma 'num_viagens' por intervalo de 15 minutos, tendo como colunas finais

@@ -77,7 +77,7 @@ def main() -> None:
 
     # Sample-função de datas
     #@ Assigns a day to synthetic trips based on the real data's distribution
-    sample_date = make_date_sampler(dados_reaisynth_dataear_input, seed=DATA_SAMPLER_SEED)
+    sample_date = make_date_sampler(gmm_train, seed=DATA_SAMPLER_SEED)
 
     #Gerar seeds(Conferir posteriormente se há reprodutibilidade)
 
@@ -87,7 +87,7 @@ def main() -> None:
 
     #Fit manual usando os hiperparâmetros do JSON
     gmm = GaussianMixture(
-           num_components=46,
+            num_components=46,
            covariance_type='full',
           covariance_regularization=0.0009980274958510734,
           trainer_params={"max_epochs": 200,
@@ -116,12 +116,12 @@ def main() -> None:
             synth_raw_data  = synth_samples_cod1(gmm, n_synth, gmm_scaler, GMM_FEATURES)
             synth_raw_data = add_location_ids_cupy(synth_raw_data)
             synth_data = synth_raw_data
-            minute_offsets = rng.integers(0, 4, size=len(synth_data)) * 15
             synth_data["tpep_pickup_datetime"] = (
-                synth_data["hora_do_dia"].apply(sample_date)
-                + pd.to_timedelta(synth_data["hora_do_dia"], unit="h")
-                + pd.to_timedelta(minute_offsets, unit="m")
+            synth_data["hora_do_dia"].dt.hour.astype(int).apply(sample_date)
+            + pd.to_timedelta(          # converte "HH:MM:SS" em duração
+                synth_data["hora_do_dia"].dt.strftime("%H:%M:%S")  # 00 s se não existir
             )
+              )
             synth_data = synth_data.sort_values("tpep_pickup_datetime").reset_index(drop=True)
             synth_data = synth_data.dropna(subset=["tpep_pickup_datetime"])
            
@@ -134,7 +134,7 @@ def main() -> None:
                 "synthetic"     : synth_data_grouped,
                 "real+synthetic": hybrid_temporal_model_train_grouped,
             }
-
+           # breakpoint()
             processed_data = prepare_all_data_for_dlinear(
             training_groups=groups,
             validation_df=dados_reais_temporal_model_val,
@@ -154,7 +154,7 @@ def main() -> None:
                 "Real + Sintético":{}
             }
             metric_names = ["R²", "SMAPE", "MAE"]
-            for typ in ["real", "synthetic", "real+synthetic"]:
+            for typ in ["synthetic", "real", "real+synthetic"]:
                 print(f"\n--- Buscando hiperparâmetros para dados: '{typ}' ---")
 
                 X_train = processed_data[typ]['X_train']
