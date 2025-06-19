@@ -115,10 +115,10 @@ def main() -> None:
     n_synth = int(len(dados_reais_gmm_train) * SYNTHETIC_MULTIPLIER)
     if n_synth == 0:
         raise ValueError("SYNTHETIC_MULTIPLIER gerou n_synth=0!")
-    dados_reais_gmm_train["hora_do_dia"] = decode_hour_from_sincos(
+    dados_reais_gmm_train["hour_of_day"] = decode_hour_from_sincos(
         dados_reais_gmm_train["sin_hr"], dados_reais_gmm_train["cos_hr"]
     )
-    dados_reais_gmm_train["num_viagens"] = 1 
+    dados_reais_gmm_train["trip_count"] = 1
     dados_reais_gmm_train = assign_zone_names_cupy(dados_reais_gmm_train)
 
     for run in range(NUM_RUNS):
@@ -133,39 +133,39 @@ def main() -> None:
             (synth_raw_data["PULocationID"] == "") |
             (synth_raw_data["DOLocationID"] == "")
             )
-            soma_viagens_invalidas = synth_raw_data.loc[filtros_nulos_ou_vazios, "num_viagens"].sum()
-           #print(f"\n[SOMA] Total de num_viagens com PULocationID ou DOLocationID nulos ou vazios: {soma_viagens_invalidas}")
+            soma_viagens_invalidas = synth_raw_data.loc[filtros_nulos_ou_vazios, "trip_count"].sum()
+           #print(f"\n[SOMA] Total de trip_count com PULocationID ou DOLocationID nulos ou vazios: {soma_viagens_invalidas}")
 
             #Precisa verificar essa função aqui. Tem muito dado sintético sendo desconsiderado. 
             #A minha hipótese é de que o GMM tá falhando na hora de gerar os dados espaciais
-            #[COMPARAÇÃO] num_viagens total
+            #[COMPARAÇÃO] trip_count total
             #• Sintético ajustado: 689,899
             #• Real             : 1,352,483
             #s_pert = adjust_counts_by_group(s_df= synth_raw_data, r_df = dados_reais_gmm_train, rng = rng)
 
             s_pert = synth_raw_data
             s_pert["tpep_pickup_datetime"] = (
-                s_pert["hora_do_dia"].apply(sample_date) +
-                pd.to_timedelta(s_pert["hora_do_dia"], unit="h")
+                s_pert["hour_of_day"].apply(sample_date) +
+                pd.to_timedelta(s_pert["hour_of_day"], unit="h")
             )
             s_pert = s_pert.dropna(subset=["tpep_pickup_datetime"])
 
             ##SALVA EM UM CSV OS NUM_VIAGENS SINTÉTICAS E REAIS PARA CADA TRIPLA DISTINTA(PU,DOLOCATIONID E HORA_DO_DIA)
             real_group = (
             dados_reais_gmm_train
-            .groupby(["PULocationID", "DOLocationID", "hora_do_dia"])["num_viagens"]
+            .groupby(["PULocationID", "DOLocationID", "hour_of_day"])["trip_count"]
             .sum()
             .reset_index()
-            .rename(columns={"num_viagens": "num_viagens_reais"})
+            .rename(columns={"trip_count": "real_trip_count"})
         )
 
-            # 2) Agrupar e somar num_viagens nos dados sintéticos (s_pert)
+            # 2) Agrupar e somar trip_count nos dados sintéticos (s_pert)
             synth_group = (
                 s_pert
-                .groupby(["PULocationID", "DOLocationID", "hora_do_dia"])["num_viagens"]
+                .groupby(["PULocationID", "DOLocationID", "hour_of_day"])["trip_count"]
                 .sum()
                 .reset_index()
-                .rename(columns={"num_viagens": "num_viagens_sinteticas"})
+                .rename(columns={"trip_count": "synthetic_trip_count"})
             )
 
             # 3) Fazer merge para ficar todas as combinações, preenchendo NaN com zero
@@ -173,7 +173,7 @@ def main() -> None:
                 pd.merge(
                     real_group,
                     synth_group,
-                    on=["PULocationID", "DOLocationID", "hora_do_dia"],
+                    on=["PULocationID", "DOLocationID", "hour_of_day"],
                     how="outer"
                 )
                 .fillna(0)

@@ -20,9 +20,9 @@ def generate_plots(df):
     df.to_csv(f"{SAVE_DIR}resultados_metricas.csv", index=False)
 
     order = ["real", "synthetic", "real+synthetic"]
-    for metrica in df["metrica"].unique():
-        for nc in sorted(df["nc"].unique()):
-            sub_nc = df[(df["metrica"] == metrica) & (df["nc"] == nc)]
+    for metric in df["metric"].unique():
+        for nc in sorted(df["n_components"].unique()):
+            sub_nc = df[(df["metric"] == metric) & (df["n_components"] == nc)]
             if sub_nc.empty:
                 continue
 
@@ -34,29 +34,29 @@ def generate_plots(df):
             for i, ep in enumerate(ep_list):
                 ax      = axs[i]
                 sub_ep  = sub_nc[sub_nc["epochs"] == ep]
-                sns.boxplot(x="tipo_dado", y="valor", order=order, data=sub_ep, ax=ax)
+                sns.boxplot(x="data_type", y="value", order=order, data=sub_ep, ax=ax)
                 ax.set_title(f"nc={nc} | epochs={ep}")
                 ax.set_xlabel("")
-                ax.set_ylabel(metrica)
+                ax.set_ylabel(metric)
             for j in range(i + 1, len(axs)):
                 axs[j].axis("off")
 
-            fig.suptitle(f"{metrica} – nc={nc}", fontsize=14, fontweight="bold")
+            fig.suptitle(f"{metric} – nc={nc}", fontsize=14, fontweight="bold")
             fig.tight_layout(rect=[0, 0, 1, 0.95])
-            fig.savefig(f"{SAVE_DIR}nc_{nc}_{metrica}.png", bbox_inches="tight")
+            fig.savefig(f"{SAVE_DIR}nc_{nc}_{metric}.png", bbox_inches="tight")
             plt.close(fig)
 
     # MAE vs R²
     try:
-        piv = df.pivot_table(index=["tipo_dado", "nc", "epochs", "seed"],
-                             columns="metrica", values="valor").reset_index()
+        piv = df.pivot_table(index=["data_type", "n_components", "epochs", "seed"],
+                             columns="metric", values="value").reset_index()
         if {"R²", "MAE"}.issubset(piv.columns):
-            avg = piv.groupby(["tipo_dado", "epochs", "nc"], as_index=False)[["R²", "MAE"]].mean()
-            for t in avg["tipo_dado"].unique():
-                sub = avg[avg["tipo_dado"] == t]
+            avg = piv.groupby(["data_type", "epochs", "n_components"], as_index=False)[["R²", "MAE"]].mean()
+            for t in avg["data_type"].unique():
+                sub = avg[avg["data_type"] == t]
                 plt.figure(figsize=(10, 6))
                 for ep in sorted(sub["epochs"].unique()):
-                    sub_ep = sub[sub["epochs"] == ep].sort_values("nc")
+                    sub_ep = sub[sub["epochs"] == ep].sort_values("n_components")
                     plt.plot(sub_ep["R²"], sub_ep["MAE"], marker="o", label=f"epochs={ep}")
                 plt.xlabel("R²"); plt.ylabel("MAE"); plt.title(f"MAE vs R² – {t}")
                 plt.legend(title="Épocas"); plt.grid(True); plt.tight_layout()
@@ -72,8 +72,8 @@ def plot_hourly_trip_comparison(
     run_idx: int,
     out_dir: Union[str, Path],
     *,
-    hour_col: str = "hora_do_dia",
-    trips_col: str = "num_viagens",
+    hour_col: str = "hour_of_day",
+    trips_col: str = "trip_count",
     dpi: int = 150,
 ) -> None:
     """
@@ -91,9 +91,9 @@ def plot_hourly_trip_comparison(
     out_dir : str ou Path
         Diretório onde o PNG será salvo.
     hour_col : str, opcional
-        Nome da coluna que contém a hora do dia (0-23). Default = "hora_do_dia".
+        Nome da coluna que contém a hora do dia (0-23). Default = "hour_of_day".
     trips_col : str, opcional
-        Nome da coluna que contém o total de viagens (uma linha = 1 viagem). Default = "num_viagens".
+        Nome da coluna que contém o total de viagens (uma linha = 1 viagem). Default = "trip_count".
     dpi : int, opcional
         Resolução do arquivo salvo.
     """
@@ -152,9 +152,9 @@ def plot_random_pair_heatmaps(
 
     Args:
         real_data (pd.DataFrame): DataFrame com os dados reais.
-            Deve conter as colunas 'PULocationID', 'DOLocationID' e 'num_viagens'.
+            Deve conter as colunas 'PULocationID', 'DOLocationID' e 'trip_count'.
         synth_data (pd.DataFrame): DataFrame com os dados sintéticos.
-            Deve conter as colunas 'PULocationID', 'DOLocationID' e 'num_viagens'.
+            Deve conter as colunas 'PULocationID', 'DOLocationID' e 'trip_count'.
         run_number (int): O número da execução atual, usado para títulos e nome do arquivo.
         save_dir (str): O diretório onde a imagem do gráfico será salva.
         num_pairs (int, optional): O número de pares (PU, DO) aleatórios a serem amostrados.
@@ -167,7 +167,7 @@ def plot_random_pair_heatmaps(
         real_data,
         index="PULocationID",
         columns="DOLocationID",
-        values="num_viagens",
+        values="trip_count",
         aggfunc="sum",
         fill_value=0,
     )
@@ -176,7 +176,7 @@ def plot_random_pair_heatmaps(
         synth_data,
         index="PULocationID",
         columns="DOLocationID",
-        values="num_viagens",
+        values="trip_count",
         aggfunc="sum",
         fill_value=0,
     )
@@ -224,7 +224,7 @@ def plot_random_pair_heatmaps(
     axes[0].set_xticklabels(pivot_real_sub.columns, rotation=90, fontsize=6)
     axes[0].set_yticks(range(len(pivot_real_sub.index)))
     axes[0].set_yticklabels(pivot_real_sub.index, fontsize=6)
-    fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label("num_viagens (real)")
+    fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04).set_label("trip_count (real)")
 
     # Heatmap (dados sintéticos)
     im1 = axes[1].imshow(
@@ -240,7 +240,7 @@ def plot_random_pair_heatmaps(
     axes[1].set_yticks([])
     axes[1].set_xticks(range(len(pivot_synth_sub.columns)))
     axes[1].set_xticklabels(pivot_synth_sub.columns, rotation=90, fontsize=6)
-    fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04).set_label("num_viagens (sintético)")
+    fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04).set_label("trip_count (synthetic)")
 
     # 6) Salvar a figura
     os.makedirs(save_dir, exist_ok=True)
