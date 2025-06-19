@@ -5,7 +5,7 @@ from utils.helpers import decode_hour_from_sincos, decode_time_from_sincos
 from typing import Sequence
 
 # ---------- amostragem do GMM ---------- #
-def synth_samples_cod1(gmm, n_samples, scaler, feature_names):
+def gen_synth_data(gmm, n_samples, scaler, feature_names):
     synth_scaled = gmm.sample(n_samples).cpu().numpy()
     df = pd.DataFrame(scaler.inverse_transform(synth_scaled), columns=feature_names)
     df["hour_of_day"] = decode_time_from_sincos(df["sin_hr"], df["cos_hr"])

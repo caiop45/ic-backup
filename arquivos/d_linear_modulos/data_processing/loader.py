@@ -13,7 +13,7 @@ def load_real_data():
     """
     df = pd.read_parquet(REAL_DATA_PATH)
     df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
-
+  
     # 2024-01/02 | seg-qua
     df = df[
         (df["tpep_pickup_datetime"].dt.year == 2024) &
@@ -64,7 +64,7 @@ def split_dataset_weekly(
     """
     # 1) Ordena cronologicamente
     df = df.sort_values(datetime_col).reset_index(drop=True)
-
+   
     # 2) Marca a semana ISO (YYYY-WW)
     iso_week = df[datetime_col].dt.isocalendar()
     df["_year_week"] = iso_week["year"].astype(str) + "-" + iso_week["week"].astype(str).str.zfill(2)

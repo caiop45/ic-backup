@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
 import config
+import random
+import torch
+
 def quarter_hour_index(dt_series: pd.Series) -> pd.Series:
     """Return the quarter-hour index (0-95) for a datetime series."""
     dt = pd.to_datetime(dt_series)
@@ -30,7 +33,10 @@ def decode_time_from_sincos(sin_values, cos_values):
     #    origin='unix' => 1970-01-01 00:00; unit='m' => deslocamento em minutos
     return pd.to_datetime(floored_minutes, unit="m", origin="unix")
   
-def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
+def group_trips_by_zone(
+    df: pd.DataFrame,
+    expected_zones: list[str] | None = None,
+) -> pd.DataFrame:
     """
      Soma 'trip_count' por intervalo de 15 minutos, tendo como colunas finais
     *os nomes de zona*.
@@ -49,9 +55,13 @@ def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
         Tabela com 'tpep_pickup_datetime' + uma coluna para cada zona do CSV.
     """
     # ── Lê o CSV de correlação só uma vez ────────────────────────────────
-    _cor_df = pd.read_csv(config.ZONE_CORRELATION_CSV, dtype={"LocationID": "int32"})
-    _EXPECTED_ZONES = _cor_df["zone"].tolist()  # ordem preservada
-    _EXPECTED_SET   = set(_EXPECTED_ZONES)      # p/ verificação rápida
+    _cor_df = pd.read_csv(
+        config.ZONE_CORRELATION_CSV, dtype={"LocationID": "int32"}
+    )
+    _ALL_ZONES = _cor_df["zone"].tolist()  # ordem preservada
+    if expected_zones is None:
+        expected_zones = _ALL_ZONES
+    _EXPECTED_SET = set(_ALL_ZONES)  # p/ verificação rápida
     # --------------------------------------------------------------------
     df = df.copy()
     df = df.dropna(subset=["PULocationID"])
@@ -84,7 +94,7 @@ def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
     #    e zera qualquer NaN remanescente
     pivot_df = (
         pivot_df
-        .reindex(columns=_EXPECTED_ZONES)  # adiciona zonas ausentes
+        .reindex(columns=expected_zones)  # adiciona zonas ausentes
         .fillna(0)                         # zera horários sem viagens
     )
 
@@ -93,10 +103,20 @@ def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
     result_df = pivot_df.reset_index()
     result_df.columns.name = None
     # garante tipo inteiro nas colunas de contagem
-    result_df[_EXPECTED_ZONES] = result_df[_EXPECTED_ZONES].astype("int32")
+    result_df[expected_zones] = result_df[expected_zones].astype("int32")
 
     return result_df
 
 def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     denom = np.abs(y_true) + np.abs(y_pred) + 1e-8
     return 100 * np.mean(2 * np.abs(y_pred - y_true) / denom)
+
+
+def set_global_seed(seed: int) -> None:
+    """Propaga a mesma seed para todos os geradores de números aleatórios."""
+    random.seed(seed)                 # módulo random do Python
+    np.random.seed(seed)              # NumPy
+    torch.manual_seed(seed)           # PyTorch (CPU)
+    torch.cuda.manual_seed_all(seed)  # PyTorch (GPU, se houver)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False

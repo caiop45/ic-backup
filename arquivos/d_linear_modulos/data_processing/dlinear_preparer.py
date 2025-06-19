@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from config import INPUT_WINDOW
+from config import INPUT_WINDOW, ZONE_CORRELATION_CSV
 import torch
 from utils.helpers import group_trips_by_zone, quarter_hour_index
 
@@ -160,7 +160,9 @@ def prepare_dlinear_tensors(
 def prepare_and_group_datasets(
     real_data: pd.DataFrame,
     synthetic_data: pd.DataFrame,
-    eval_real_data: pd.DataFrame
+    eval_real_data: pd.DataFrame,
+    *,
+    only_existing_zones: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Recebe DataFrames de dados reais e sintéticos, cria um conjunto de dados híbrido,
@@ -198,11 +200,26 @@ def prepare_and_group_datasets(
     # 1. Cria o DataFrame híbrido combinando os dados reais e sintéticos
     hybrid_data = pd.concat([real_copy, synthetic_copy], ignore_index=True)
 
+    # Lista de zonas utilizadas em todas as tabelas
+    if only_existing_zones:
+        cor_df = pd.read_csv(
+            ZONE_CORRELATION_CSV, dtype={"LocationID": "int32"}
+        )
+        all_zones = cor_df["zone"].tolist()
+        existing_set = set(hybrid_data["PULocationID"].dropna().unique())
+        zones_for_group = [z for z in all_zones if z in existing_set]
+    else:
+        zones_for_group = None
+
     # 2. Agrupa cada um dos três DataFrames usando a função auxiliar
-    real_grouped = group_trips_by_zone(real_copy)
-    synth_grouped = group_trips_by_zone(synthetic_copy)
-    hybrid_grouped = group_trips_by_zone(hybrid_data)
-    eval_grouped = group_trips_by_zone(eval_real_data)
+    real_grouped = group_trips_by_zone(real_copy, expected_zones=zones_for_group)
+    synth_grouped = group_trips_by_zone(
+        synthetic_copy, expected_zones=zones_for_group
+    )
+    hybrid_grouped = group_trips_by_zone(hybrid_data, expected_zones=zones_for_group)
+    eval_grouped = group_trips_by_zone(
+        eval_real_data, expected_zones=zones_for_group
+    )
 
     def transform_timestamp_column(df: pd.DataFrame) -> pd.DataFrame:
         """Convert timestamp to quarter-hour index and drop the original column."""

@@ -130,21 +130,11 @@ def fit_gmm_bic_optuna(
         num_components=best_params["n_components"],
         covariance_type=best_params["covariance_type"],
         covariance_regularization=best_params["covariance_regularization"],
-        trainer_params={"max_epochs": 200, "accelerator": "auto", "devices": 1},
+        trainer_params={"max_epochs": 400, "accelerator": "auto", "devices": 1},
     )
     best_gmm.fit(X_scaled)
 
-    # ---------- salvar ----------
-    if save_dir is not None:
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = Path(save_dir) / f"gmm_optuna_best_{ts}.json"
-        with open(out_path, "w", encoding="utf-8") as fp:
-            json.dump(
-                {"best_params": best_params, "best_bic": best_bic, "best_aic": best_aic},
-                fp,
-                indent=2,
-            )
+ 
 
     return best_gmm, best_params, best_bic, best_aic
 
@@ -183,20 +173,5 @@ def multiple_optuna_runs(
             melhor_aic = aic
             melhor_gmm = gmm
             melhor_params = params
-
-    if save_dir is not None:
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        out_path = Path(save_dir) / "gmm_multiple_optuna_results.json"
-        with open(out_path, "w", encoding="utf-8") as fp:
-            json.dump(
-                {
-                    "melhor_bic": melhor_bic,
-                    "melhor_aic": melhor_aic,
-                    "melhor_params": melhor_params,
-                    "resultados_todas_as_runs": resultados,
-                },
-                fp,
-                indent=2,
-            )
 
     return melhor_gmm, melhor_params, melhor_bic, melhor_aic
