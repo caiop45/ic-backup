@@ -21,14 +21,14 @@ def load_real_data():
         (df["tpep_pickup_datetime"].dt.dayofweek.between(0, 2))
     ]
 
-    df["hora_do_dia"] = df["tpep_pickup_datetime"].dt.hour
-    df["num_viagens"] = 1
+    df["hour_of_day"] = df["tpep_pickup_datetime"].dt.hour
+    df["trip_count"] = 1
 
-    hour_counts = df.groupby("hora_do_dia")["num_viagens"].sum().sort_index()
+    hour_counts = df.groupby("hour_of_day")["trip_count"].sum().sort_index()
     hour_counts_dict_real = hour_counts.to_dict()
 
-    df["sin_hr"] = np.sin(2 * np.pi * df["hora_do_dia"] / 24)
-    df["cos_hr"] = np.cos(2 * np.pi * df["hora_do_dia"] / 24)
+    df["sin_hr"] = np.sin(2 * np.pi * df["hour_of_day"] / 24)
+    df["cos_hr"] = np.cos(2 * np.pi * df["hour_of_day"] / 24)
 
     GMM_FEATURES = [
         "sin_hr", "cos_hr",
@@ -36,7 +36,7 @@ def load_real_data():
         "DO_longitude", "DO_latitude",
     ]
     dados_reais_gmm = df[GMM_FEATURES].dropna().astype(np.float32)
-  # dados_reais_dlinear_input = df[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
+  # dados_reais_dlinear_input = df[["tpep_pickup_datetime", "hour_of_day", "trip_count"]].copy()
     dados_reais_dlinear_input = df.copy()
     return df, dados_reais_gmm, dados_reais_dlinear_input, hour_counts_dict_real, GMM_FEATURES
 

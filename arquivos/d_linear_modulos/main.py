@@ -48,7 +48,7 @@ def main():
     sample_date = make_date_sampler(dados_reais_dlinear_input, seed=DATE_SAMPLER_SEED)
 
     # DataFrame final de métricas
-    df_res = pd.DataFrame(columns=["tipo_dado", "metrica", "valor", "nc", "epochs", "seed"])
+    df_res = pd.DataFrame(columns=["data_type", "metric", "value", "n_components", "epochs", "seed"])
 
     # ----- 3) Loop principal -----
     for nc in [40, 45, 50]:
@@ -73,11 +73,11 @@ def main():
                 continue
 
             s_pert["tpep_pickup_datetime"] = (
-                s_pert["hora_do_dia"].apply(sample_date) +
-                pd.to_timedelta(s_pert["hora_do_dia"], unit="h")
+                s_pert["hour_of_day"].apply(sample_date) +
+                pd.to_timedelta(s_pert["hour_of_day"], unit="h")
             )
             s_pert = s_pert.dropna(subset=["tpep_pickup_datetime"])
-            s_dlin = s_pert[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
+            s_dlin = s_pert[["tpep_pickup_datetime", "hour_of_day", "trip_count"]].copy()
 
             real_plus = pd.concat([dados_reais_dlinear_input, s_dlin], ignore_index=True)
 

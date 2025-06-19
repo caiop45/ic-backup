@@ -32,7 +32,7 @@ def decode_time_from_sincos(sin_values, cos_values):
   
 def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
     """
-     Soma 'num_viagens' por intervalo de 15 minutos, tendo como colunas finais
+     Soma 'trip_count' por intervalo de 15 minutos, tendo como colunas finais
     *os nomes de zona*.
 
     Parâmetros
@@ -41,7 +41,7 @@ def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
         Deve conter:
         • 'tpep_pickup_datetime'   – tpep_pickup_datetime
         • 'PULocationID'  – **nome da zona** (string)
-        • 'num_viagens'   – contagem de viagens
+        • 'trip_count'   – contagem de viagens
 
     Retorna
     -------
@@ -67,7 +67,7 @@ def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
     # 2. Pivot table: soma de viagens por hora × zona
     pivot_df = pd.pivot_table(
         df,
-        values="num_viagens",
+        values="trip_count",
         index="tpep_pickup_datetime",
         columns="PULocationID",
         aggfunc="sum",

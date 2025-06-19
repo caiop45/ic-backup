@@ -3,18 +3,18 @@ import pandas as pd
 
 def make_date_sampler(df_real, ts_col="tpep_pickup_datetime", seed=None):
     """
-    Retorna função sample_date(hora) que preserva a distribuição
+    Retorna função sample_date(hour) que preserva a distribuição
     de datas reais para cada hora.
     """
     df = df_real.copy()
-    df["hora"] = df[ts_col].dt.hour
-    df["data"] = df[ts_col].dt.normalize()
+    df["hour"] = df[ts_col].dt.hour
+    df["date"] = df[ts_col].dt.normalize()
     rng = np.random.default_rng(seed or 12345)
 
     prob = {
-        h: (sub["data"].value_counts().sort_index().index.to_numpy(),
-            sub["data"].value_counts(normalize=True).sort_index().values)
-        for h, sub in df.groupby("hora")
+        h: (sub["date"].value_counts().sort_index().index.to_numpy(),
+            sub["date"].value_counts(normalize=True).sort_index().values)
+        for h, sub in df.groupby("hour")
     }
 
     def sample_date(h):

@@ -103,10 +103,10 @@ def main() -> None:
     if n_synth == 0:
         raise ValueError("SYNTHETIC_MULTIPLIER gerou n_synth=0!")
     
-    dados_reais_gmm_train["hora_do_dia"] = decode_hour_from_sincos(
+    dados_reais_gmm_train["hour_of_day"] = decode_hour_from_sincos(
         dados_reais_gmm_train["sin_hr"], dados_reais_gmm_train["cos_hr"]
     )
-    dados_reais_gmm_train["num_viagens"] = 1 
+    dados_reais_gmm_train["trip_count"] = 1
     dados_reais_gmm_train = assign_zone_names_cupy(dados_reais_gmm_train)
     dados_reais_temporal_model_train = assign_zone_names_cupy(dados_reais_temporal_model_train)
     dados_reais_temporal_model_val = assign_zone_names_cupy(dados_reais_temporal_model_val)
@@ -120,9 +120,9 @@ def main() -> None:
             synth_raw_data = assign_zone_names_cupy(synth_raw_data)
             synth_data = synth_raw_data
             synth_data["tpep_pickup_datetime"] = (
-            synth_data["hora_do_dia"].dt.hour.astype(int).apply(sample_date)
+            synth_data["hour_of_day"].dt.hour.astype(int).apply(sample_date)
             + pd.to_timedelta(          # converte "HH:MM:SS" em duração
-                synth_data["hora_do_dia"].dt.strftime("%H:%M:%S")  # 00 s se não existir
+                synth_data["hour_of_day"].dt.strftime("%H:%M:%S")  # 00 s se não existir
             )
               )
             synth_data = synth_data.sort_values("tpep_pickup_datetime").reset_index(drop=True)

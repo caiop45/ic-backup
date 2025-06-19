@@ -7,34 +7,34 @@ from utils.helpers import group_trips_by_zone, quarter_hour_index
 # ---------- pré-agregação ---------- #
 def preprocess_trip_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate trip counts by 15 minute interval."""
-    if df.empty or not {"tpep_pickup_datetime", "hora_do_dia", "num_viagens"}.issubset(df.columns):
-        return pd.DataFrame(columns=["tpep_pickup_datetime", "hora_do_dia", "num_viagens"])
+    if df.empty or not {"tpep_pickup_datetime", "hour_of_day", "trip_count"}.issubset(df.columns):
+        return pd.DataFrame(columns=["tpep_pickup_datetime", "hour_of_day", "trip_count"])
 
-    df = df[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
+    df = df[["tpep_pickup_datetime", "hour_of_day", "trip_count"]].copy()
     df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
-    df["data_normalizada"] = df["tpep_pickup_datetime"].dt.normalize()
-    df["hora_do_dia"] = quarter_hour_index(df["tpep_pickup_datetime"])
+    df["normalized_date"] = df["tpep_pickup_datetime"].dt.normalize()
+    df["hour_of_day"] = quarter_hour_index(df["tpep_pickup_datetime"])
 
     grp = (
-        df.groupby(["data_normalizada", "hora_do_dia"], as_index=False)
-          .agg(num_viagens=("num_viagens", "sum"))
+        df.groupby(["normalized_date", "hour_of_day"], as_index=False)
+          .agg(trip_count=("trip_count", "sum"))
     )
 
-    grp["tpep_pickup_datetime"] = grp["data_normalizada"] + pd.to_timedelta(grp["hora_do_dia"] * 15, unit="m")
+    grp["tpep_pickup_datetime"] = grp["normalized_date"] + pd.to_timedelta(grp["hour_of_day"] * 15, unit="m")
 
-    return grp[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]]
+    return grp[["tpep_pickup_datetime", "hour_of_day", "trip_count"]]
 
 # ---------- pares entrada-alvo ---------- #
 def build_input_target_pairs(group_df: pd.DataFrame, window: int = INPUT_WINDOW):
-    if group_df.empty or group_df["num_viagens"].sum() == 0:
+    if group_df.empty or group_df["trip_count"].sum() == 0:
         return pd.DataFrame()
 
     df = group_df.copy()
     df["date"] = pd.to_datetime(df["tpep_pickup_datetime"]).dt.normalize()
 
     mat = (df.pivot_table(index="date",
-                          columns="hora_do_dia",
-                          values="num_viagens",
+                          columns="hour_of_day",
+                          values="trip_count",
                           aggfunc="sum",
                           fill_value=np.nan)
              .sort_index())
@@ -100,7 +100,7 @@ def create_windows(
     Função auxiliar que transforma um DataFrame em janelas (X, y) já como tensores do PyTorch.
     """
     device = torch.device('cuda:0')
-    target_cols = [col for col in df.columns if col != 'hora_do_dia']
+    target_cols = [col for col in df.columns if col != 'hour_of_day']
     
     X_list, y_list = [], []
     
@@ -208,7 +208,7 @@ def prepare_and_group_datasets(
         """Convert timestamp to quarter-hour index and drop the original column."""
         return (
             df.assign(
-                hora_do_dia=lambda inner: quarter_hour_index(inner["tpep_pickup_datetime"])
+                hour_of_day=lambda inner: quarter_hour_index(inner["tpep_pickup_datetime"])
             )
             .drop(columns=["tpep_pickup_datetime"])
         )
