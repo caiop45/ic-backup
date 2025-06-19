@@ -2,7 +2,7 @@ import cupy as cp
 import pandas as pd
 import geopandas as gpd
 
-def add_location_ids_cupy(
+def assign_zone_names_cupy(
     df,
     taxi_zones_path='/home-ext/caioloss/Dados/taxi-zones',
     pu_id=None,

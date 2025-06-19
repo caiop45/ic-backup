@@ -1,18 +1,19 @@
 import numpy as np
 import pandas as pd
-from config import WINDOW
+from config import INPUT_WINDOW
 import torch
-from utils.helpers import agrupar_viagens_por_local, quarter_hour_slot
+from utils.helpers import group_trips_by_zone, quarter_hour_index
 
 # ---------- pré-agregação ---------- #
-def _prep(df0: pd.DataFrame):
-    if df0.empty or not {"tpep_pickup_datetime", "hora_do_dia", "num_viagens"}.issubset(df0.columns):
+def preprocess_trip_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate trip counts by 15 minute interval."""
+    if df.empty or not {"tpep_pickup_datetime", "hora_do_dia", "num_viagens"}.issubset(df.columns):
         return pd.DataFrame(columns=["tpep_pickup_datetime", "hora_do_dia", "num_viagens"])
 
-    df = df0[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
+    df = df[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]].copy()
     df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
-    df["data_normalizada"]     = df["tpep_pickup_datetime"].dt.normalize()
-    df["hora_do_dia"] = quarter_hour_slot(df["tpep_pickup_datetime"]) 
+    df["data_normalizada"] = df["tpep_pickup_datetime"].dt.normalize()
+    df["hora_do_dia"] = quarter_hour_index(df["tpep_pickup_datetime"])
 
     grp = (
         df.groupby(["data_normalizada", "hora_do_dia"], as_index=False)
@@ -24,7 +25,7 @@ def _prep(df0: pd.DataFrame):
     return grp[["tpep_pickup_datetime", "hora_do_dia", "num_viagens"]]
 
 # ---------- pares entrada-alvo ---------- #
-def build_pairs_df(group_df: pd.DataFrame, window: int = WINDOW):
+def build_input_target_pairs(group_df: pd.DataFrame, window: int = INPUT_WINDOW):
     if group_df.empty or group_df["num_viagens"].sum() == 0:
         return pd.DataFrame()
 
@@ -89,7 +90,12 @@ def apply_growth_weighting(X: np.ndarray):
         Xw[i] *= np.array(w, dtype=np.float32)
     return Xw
 
-def _create_windows(df: pd.DataFrame, input_window_size: int, prediction_horizon: int, device: torch.device):
+def create_windows(
+    df: pd.DataFrame,
+    input_window_size: int,
+    prediction_horizon: int,
+    device: torch.device,
+):
     """
     Função auxiliar que transforma um DataFrame em janelas (X, y) já como tensores do PyTorch.
     """
@@ -121,40 +127,28 @@ def _create_windows(df: pd.DataFrame, input_window_size: int, prediction_horizon
     return X_tensor.to(device), y_tensor.to(device)
 
 
-def prepare_all_data_for_dlinear(
-    training_groups: dict, 
-    validation_df: pd.DataFrame, 
+def prepare_dlinear_tensors(
+    training_groups: dict,
+    validation_df: pd.DataFrame,
     input_window_size: int = 3, 
     prediction_horizon: int = 1,
     device: torch.device = torch.device('cuda:0')
     ):
-    """
-    Prepara todos os dados para o modelo Dlinear, retornando tensores do PyTorch.
-
-    Args:
-        training_groups (dict): Dicionário com os DataFrames de treino.
-        validation_df (pd.DataFrame): DataFrame de validação.
-        input_window_size (int): Passos de tempo na janela de entrada.
-        prediction_horizon (int): Passos de tempo a serem previstos.
-        device (torch.device): Dispositivo para alocar os tensores ('cpu' ou 'cuda').
-
-    Returns:
-        dict: Dicionário contendo os pares de tensores (X_train, y_train) e (X_val, y_val).
-    """
+    """Prepare PyTorch tensors for the DLinear model."""
     
     windowed_data = {}
 
     print(f"Preparando dados e movendo tensores para o dispositivo: '{device}'")
 
     for name, train_df in training_groups.items():
-        X_train, y_train = _create_windows(train_df, input_window_size, prediction_horizon, device)
+        X_train, y_train = create_windows(train_df, input_window_size, prediction_horizon, device)
         windowed_data[name] = {
             'X_train': X_train,
             'y_train': y_train
         }
         print(f"-> Treino '{name}' processado. Shape X_train: {X_train.shape}, Shape y_train: {y_train.shape}")
 
-    X_val, y_val = _create_windows(validation_df, input_window_size, prediction_horizon, device)
+    X_val, y_val = create_windows(validation_df, input_window_size, prediction_horizon, device)
     windowed_data['validation'] = {
         'X_val': X_val,
         'y_val': y_val
@@ -163,10 +157,10 @@ def prepare_all_data_for_dlinear(
     
     return windowed_data
 
-def preparar_e_agrupar_datasets(
-    dados_reais: pd.DataFrame, 
-    dados_sinteticos: pd.DataFrame,
-    dados_reais_eval: pd.DataFrame
+def prepare_and_group_datasets(
+    real_data: pd.DataFrame,
+    synthetic_data: pd.DataFrame,
+    eval_real_data: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Recebe DataFrames de dados reais e sintéticos, cria um conjunto de dados híbrido,
@@ -188,39 +182,42 @@ def preparar_e_agrupar_datasets(
     """
     # É uma boa prática trabalhar com cópias para evitar efeitos colaterais
     # nos DataFrames originais fora da função.
-    dados_reais_copy = dados_reais.copy()
-    dados_sinteticos_copy = dados_sinteticos.copy()
+    real_copy = real_data.copy()
+    synthetic_copy = synthetic_data.copy()
 
-    dados_reais_copy['tpep_pickup_datetime'] = pd.to_datetime(
-        dados_reais_copy['tpep_pickup_datetime']
+    real_copy['tpep_pickup_datetime'] = pd.to_datetime(
+        real_copy['tpep_pickup_datetime']
     ).dt.floor('15min')
-    dados_sinteticos_copy['tpep_pickup_datetime'] = pd.to_datetime(
-        dados_sinteticos_copy['tpep_pickup_datetime']
+    synthetic_copy['tpep_pickup_datetime'] = pd.to_datetime(
+        synthetic_copy['tpep_pickup_datetime']
     ).dt.floor('15min')
-    dados_reais_eval['tpep_pickup_datetime'] = pd.to_datetime(
-        dados_reais_eval['tpep_pickup_datetime']
+    eval_real_data['tpep_pickup_datetime'] = pd.to_datetime(
+        eval_real_data['tpep_pickup_datetime']
     ).dt.floor('15min')
 
     # 1. Cria o DataFrame híbrido combinando os dados reais e sintéticos
-    dados_hibridos = pd.concat([dados_reais_copy, dados_sinteticos_copy], ignore_index=True)
+    hybrid_data = pd.concat([real_copy, synthetic_copy], ignore_index=True)
 
     # 2. Agrupa cada um dos três DataFrames usando a função auxiliar
-    real_grouped = agrupar_viagens_por_local(dados_reais_copy)
-    synth_grouped = agrupar_viagens_por_local(dados_sinteticos_copy)
-    hybrid_grouped = agrupar_viagens_por_local(dados_hibridos)
-    dados_eval_grouped = agrupar_viagens_por_local(dados_reais_eval)
+    real_grouped = group_trips_by_zone(real_copy)
+    synth_grouped = group_trips_by_zone(synthetic_copy)
+    hybrid_grouped = group_trips_by_zone(hybrid_data)
+    eval_grouped = group_trips_by_zone(eval_real_data)
 
-    def transformar_coluna_data(df: pd.DataFrame) -> pd.DataFrame:
-         """Converte o timestamp em índice de 15 minutos (0-95) e remove o timestamp."""
-         return df.assign(
-            hora_do_dia=lambda df_interno: quarter_hour_slot(df_interno["tpep_pickup_datetime"])
-        ).drop(columns=["tpep_pickup_datetime"])
+    def transform_timestamp_column(df: pd.DataFrame) -> pd.DataFrame:
+        """Convert timestamp to quarter-hour index and drop the original column."""
+        return (
+            df.assign(
+                hora_do_dia=lambda inner: quarter_hour_index(inner["tpep_pickup_datetime"])
+            )
+            .drop(columns=["tpep_pickup_datetime"])
+        )
 
     # 4. Aplica a transformação aos três DataFrames agrupados
-    hybrid_grouped = transformar_coluna_data(hybrid_grouped)
-    real_grouped = transformar_coluna_data(real_grouped)
-    synth_grouped = transformar_coluna_data(synth_grouped)
-    dados_eval_grouped = transformar_coluna_data(dados_eval_grouped)
+    hybrid_grouped = transform_timestamp_column(hybrid_grouped)
+    real_grouped = transform_timestamp_column(real_grouped)
+    synth_grouped = transform_timestamp_column(synth_grouped)
+    eval_grouped = transform_timestamp_column(eval_grouped)
 
     # 3. Retorna os três DataFrames agrupados na ordem especificada
-    return hybrid_grouped, real_grouped, synth_grouped, dados_eval_grouped
+    return hybrid_grouped, real_grouped, synth_grouped, eval_grouped

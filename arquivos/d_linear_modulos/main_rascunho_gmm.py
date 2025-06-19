@@ -1,33 +1,28 @@
 import torch, numpy as np, pandas as pd
 import os
 from config import (
-    WINDOW,
+    INPUT_WINDOW,
     SYNTHETIC_MULTIPLIER,
-    NUM_EXECUCOES,
-    DATA_SAMPLER_SEED,
+    NUM_RUNS,
+    DATE_SAMPLER_SEED,
     SAVE_DIR,
 )
 from data_processing.loader            import load_real_data, split_dataset_weekly
 from data_processing.gmm_preparer      import scale_features
-from data_processing.dlinear_preparer  import _prep, build_pairs_df, apply_growth_weighting
+
 from synthetic_data.date_sampler       import make_date_sampler
 from synthetic_data.generator          import (
     synth_samples_cod1,
     equal_freq,
     perturb_counts,  #  qmap/jitter ficam opcionais
-    adjust_counts_by_group
 )
 from models.gmm_model import multiple_optuna_runs
 from models.dlinear                    import DLinear, train_model
 from evaluation.metrics                import compute_metrics
 from evaluation.plotting               import generate_plots, plot_hourly_trip_comparison, plot_random_pair_heatmaps
-from synthetic_data.min_trips import (
-    get_min_daily_trips,
-    downsample_to_min_daily,
-)
 from pycave.bayes import GaussianMixture
-from utils.helpers import decode_hour
-from utils.zone_id import add_location_ids_cupy
+from utils.helpers import decode_hour_from_sincos
+from utils.zone_id import assign_zone_names_cupy
 import matplotlib.pyplot as plt       
 # ──────────────────────────────────────────────────────────────
 def main() -> None:
@@ -80,7 +75,7 @@ def main() -> None:
 
     # Sample-função de datas
     #@ Assigns a day to synthetic trips based on the real data's distribution
-    sample_date = make_date_sampler(dados_reaisynth_dataear_input, seed=DATA_SAMPLER_SEED)
+    sample_date = make_date_sampler(dados_reaisynth_dataear_input, seed=DATE_SAMPLER_SEED)
 
     #Gerar seeds(Conferir posteriormente se há reprodutibilidade)
 
@@ -100,7 +95,7 @@ def main() -> None:
    # gmm, best_params, best_bic = multiple_optuna_runs(
     #X_scaled,
    # search_space=search_space,
-   # seeds = rng.integers(low=0, high=2**31-1, size=NUM_EXECUCOES).tolist(),
+   # seeds = rng.integers(low=0, high=2**31-1, size=NUM_RUNS).tolist(),
    # n_trials=200,
    # save_dir=r"arquivos/d_linear_modulos/models"
    # )
@@ -120,14 +115,16 @@ def main() -> None:
     n_synth = int(len(dados_reais_gmm_train) * SYNTHETIC_MULTIPLIER)
     if n_synth == 0:
         raise ValueError("SYNTHETIC_MULTIPLIER gerou n_synth=0!")
-    dados_reais_gmm_train["hora_do_dia"] = decode_hour(dados_reais_gmm_train["sin_hr"], dados_reais_gmm_train["cos_hr"])
+    dados_reais_gmm_train["hora_do_dia"] = decode_hour_from_sincos(
+        dados_reais_gmm_train["sin_hr"], dados_reais_gmm_train["cos_hr"]
+    )
     dados_reais_gmm_train["num_viagens"] = 1 
-    dados_reais_gmm_train = add_location_ids_cupy(dados_reais_gmm_train)
+    dados_reais_gmm_train = assign_zone_names_cupy(dados_reais_gmm_train)
 
-    for run in range(NUM_EXECUCOES):
+    for run in range(NUM_RUNS):
             #Gera os dados sintéticos
             synth_raw_data  = synth_samples_cod1(gmm, n_synth, gmm_scaler, GMM_FEATURES)
-            synth_raw_data = add_location_ids_cupy(synth_raw_data)
+            synth_raw_data = assign_zone_names_cupy(synth_raw_data)
 
             #Printa o num de zonas vazias retornadas pela add_Locations_id
             filtros_nulos_ou_vazios = (

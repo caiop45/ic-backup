@@ -1,33 +1,34 @@
 import torch, numpy as np, pandas as pd
 import os
 from config import (
-    WINDOW,
+    INPUT_WINDOW,
     SYNTHETIC_MULTIPLIER,
-    NUM_EXECUCOES,
-    DATA_SAMPLER_SEED,
+    NUM_RUNS,
+    DATE_SAMPLER_SEED,
     SAVE_DIR,
 )
 from data_processing.loader            import load_real_data, split_dataset_weekly
 from data_processing.gmm_preparer      import scale_features
-from data_processing.dlinear_preparer  import prepare_all_data_for_dlinear, build_pairs_df, apply_growth_weighting, preparar_e_agrupar_datasets
+from data_processing.dlinear_preparer  import (
+    prepare_dlinear_tensors,
+    build_input_target_pairs,
+    apply_growth_weighting,
+    prepare_and_group_datasets,
+)
 from synthetic_data.date_sampler       import make_date_sampler
 from synthetic_data.generator          import (
     synth_samples_cod1,
     equal_freq,
     perturb_counts,  #  qmap/jitter ficam opcionais
-    adjust_counts_by_group
 )
 from models.gmm_model import multiple_optuna_runs
 from models import DLinearModel, train_model, optimize_dlinear
 from evaluation.metrics                import compute_metrics
 from evaluation.plotting               import generate_plots, plot_hourly_trip_comparison, plot_random_pair_heatmaps, boxplot_model_eval 
-from synthetic_data.min_trips import (
-    get_min_daily_trips,
-    downsample_to_min_daily,
-)
+
 from pycave.bayes import GaussianMixture
-from utils.helpers import decode_hour, agrupar_viagens_por_local, smape
-from utils.zone_id import add_location_ids_cupy
+from utils.helpers import decode_hour_from_sincos, group_trips_by_zone, smape
+from utils.zone_id import assign_zone_names_cupy
 import matplotlib.pyplot as plt      
 from sklearn.metrics import r2_score, mean_absolute_error 
 # ──────────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ def main() -> None:
 
     # Sample-função de datas
     #@ Assigns a day to synthetic trips based on the real data's distribution
-    sample_date = make_date_sampler(gmm_train, seed=DATA_SAMPLER_SEED)
+    sample_date = make_date_sampler(gmm_train, seed=DATE_SAMPLER_SEED)
 
     #Gerar seeds(Conferir posteriormente se há reprodutibilidade)
 
@@ -102,19 +103,21 @@ def main() -> None:
     if n_synth == 0:
         raise ValueError("SYNTHETIC_MULTIPLIER gerou n_synth=0!")
     
-    dados_reais_gmm_train["hora_do_dia"] = decode_hour(dados_reais_gmm_train["sin_hr"], dados_reais_gmm_train["cos_hr"])
+    dados_reais_gmm_train["hora_do_dia"] = decode_hour_from_sincos(
+        dados_reais_gmm_train["sin_hr"], dados_reais_gmm_train["cos_hr"]
+    )
     dados_reais_gmm_train["num_viagens"] = 1 
-    dados_reais_gmm_train = add_location_ids_cupy(dados_reais_gmm_train)
-    dados_reais_temporal_model_train = add_location_ids_cupy(dados_reais_temporal_model_train)
-    dados_reais_temporal_model_val= add_location_ids_cupy(dados_reais_temporal_model_val)
+    dados_reais_gmm_train = assign_zone_names_cupy(dados_reais_gmm_train)
+    dados_reais_temporal_model_train = assign_zone_names_cupy(dados_reais_temporal_model_train)
+    dados_reais_temporal_model_val = assign_zone_names_cupy(dados_reais_temporal_model_val)
     dados_reais_temporal_model_val['tpep_pickup_datetime'] = pd.to_datetime(
         dados_reais_temporal_model_val['tpep_pickup_datetime']
     ).dt.floor('15min')
-    #dados_reais_temporal_model_val = agrupar_viagens_por_local(dados_reais_temporal_model_val)
-    for run in range(NUM_EXECUCOES):
+    #dados_reais_temporal_model_val = group_trips_by_zone(dados_reais_temporal_model_val)
+    for run in range(NUM_RUNS):
             #Gera os dados sintéticos
             synth_raw_data  = synth_samples_cod1(gmm, n_synth, gmm_scaler, GMM_FEATURES)
-            synth_raw_data = add_location_ids_cupy(synth_raw_data)
+            synth_raw_data = assign_zone_names_cupy(synth_raw_data)
             synth_data = synth_raw_data
             synth_data["tpep_pickup_datetime"] = (
             synth_data["hora_do_dia"].dt.hour.astype(int).apply(sample_date)
@@ -125,8 +128,16 @@ def main() -> None:
             synth_data = synth_data.sort_values("tpep_pickup_datetime").reset_index(drop=True)
             synth_data = synth_data.dropna(subset=["tpep_pickup_datetime"])
            
-            hybrid_temporal_model_train_grouped, dados_reais_temporal_model_train_grouped, synth_data_grouped, dados_reais_temporal_model_val = preparar_e_agrupar_datasets(dados_reais = dados_reais_temporal_model_train,
-                                                              dados_sinteticos = synth_data, dados_reais_eval= dados_reais_temporal_model_val)
+            (
+                hybrid_temporal_model_train_grouped,
+                dados_reais_temporal_model_train_grouped,
+                synth_data_grouped,
+                dados_reais_temporal_model_val,
+            ) = prepare_and_group_datasets(
+                real_data=dados_reais_temporal_model_train,
+                synthetic_data=synth_data,
+                eval_real_data=dados_reais_temporal_model_val,
+            )
 
             #breakpoint()
             groups = {
@@ -135,7 +146,7 @@ def main() -> None:
                 "real+synthetic": hybrid_temporal_model_train_grouped,
             }
            # breakpoint()
-            processed_data = prepare_all_data_for_dlinear(
+            processed_data = prepare_dlinear_tensors(
             training_groups=groups,
             validation_df=dados_reais_temporal_model_val,
             input_window_size=8,

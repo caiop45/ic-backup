@@ -1,29 +1,23 @@
 import numpy as np
 import pandas as pd
 import config
-def quarter_hour_slot(dt_series: pd.Series) -> pd.Series:
-    """Retorna o índice de 15 minutos (0-95) para uma série datetime."""
+def quarter_hour_index(dt_series: pd.Series) -> pd.Series:
+    """Return the quarter-hour index (0-95) for a datetime series."""
     dt = pd.to_datetime(dt_series)
     return dt.dt.hour * 4 + dt.dt.minute // 15
 
 #Retorna apenas hora
-def decode_hour(sin_s, cos_s):
-    """
-    Converte seno/cosseno da hora em inteiro de 0-23 h.
-    """
-    ang = np.mod(np.arctan2(sin_s, cos_s), 2 * np.pi)
+def decode_hour_from_sincos(sin_values, cos_values):
+    """Convert hour sin/cos values to integers from 0 to 23."""
+    ang = np.mod(np.arctan2(sin_values, cos_values), 2 * np.pi)
     return np.rint(ang * 24 / (2 * np.pi)).astype(int) % 24
 
 #Retorna hora:minuto(15min intervalo)
 
-def decode_hour_synth(sin_s, cos_s):
-    """
-    Converte seno/cosseno da hora em timestamps pandas (dtype datetime64[ns])
-    ancorados em 1970-01-01 HH:MM:00, sempre arredondando
-    para o intervalo de 15 min imediatamente inferior.
-    """
+def decode_time_from_sincos(sin_values, cos_values):
+    """Convert hour sin/cos values to pandas timestamps rounded to 15 minutes."""
     # 1. Ângulo ∈ [0, 2π)
-    ang = np.mod(np.arctan2(sin_s, cos_s), 2 * np.pi)
+    ang = np.mod(np.arctan2(sin_values, cos_values), 2 * np.pi)
 
     # 2. Minutos decimais no dia (0-1440)
     total_minutes = ang * (24 * 60) / (2 * np.pi)
@@ -34,9 +28,9 @@ def decode_hour_synth(sin_s, cos_s):
 
     # 4. Converte p/ datetime64[ns]
     #    origin='unix' => 1970-01-01 00:00; unit='m' => deslocamento em minutos
-    return pd.to_datetime(floored_minutes, unit='m', origin='unix')
+    return pd.to_datetime(floored_minutes, unit="m", origin="unix")
   
-def agrupar_viagens_por_local(df: pd.DataFrame) -> pd.DataFrame:
+def group_trips_by_zone(df: pd.DataFrame) -> pd.DataFrame:
     """
      Soma 'num_viagens' por intervalo de 15 minutos, tendo como colunas finais
     *os nomes de zona*.
@@ -55,7 +49,7 @@ def agrupar_viagens_por_local(df: pd.DataFrame) -> pd.DataFrame:
         Tabela com 'tpep_pickup_datetime' + uma coluna para cada zona do CSV.
     """
     # ── Lê o CSV de correlação só uma vez ────────────────────────────────
-    _cor_df = pd.read_csv(config.ZONE_CRR, dtype={"LocationID": "int32"})
+    _cor_df = pd.read_csv(config.ZONE_CORRELATION_CSV, dtype={"LocationID": "int32"})
     _EXPECTED_ZONES = _cor_df["zone"].tolist()  # ordem preservada
     _EXPECTED_SET   = set(_EXPECTED_ZONES)      # p/ verificação rápida
     # --------------------------------------------------------------------

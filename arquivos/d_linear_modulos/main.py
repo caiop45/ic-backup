@@ -1,11 +1,19 @@
 import torch, numpy as np, pandas as pd
 
 from config import (
-    WINDOW, SYNTHETIC_MULTIPLIER, NUM_EXECUCOES, DATA_SAMPLER_SEED, SAVE_DIR
+    INPUT_WINDOW,
+    SYNTHETIC_MULTIPLIER,
+    NUM_RUNS,
+    DATE_SAMPLER_SEED,
+    SAVE_DIR,
 )
 from data_processing.loader            import load_real_data
 from data_processing.gmm_preparer      import scale_features
-from data_processing.dlinear_preparer  import _prep, build_pairs_df, apply_growth_weighting
+from data_processing.dlinear_preparer  import (
+    preprocess_trip_dataframe,
+    build_input_target_pairs,
+    apply_growth_weighting,
+)
 from synthetic_data.date_sampler       import make_date_sampler
 from synthetic_data.generator          import (
     synth_samples_cod1, equal_freq, perturb_counts  #  qmap/jitter ficam opcionais
@@ -37,7 +45,7 @@ def main():
     gmm_scaler, X_scaled = scale_features(dados_reais_gmm)
 
     # Sample-função de datas
-    sample_date = make_date_sampler(dados_reais_dlinear_input, seed=DATA_SAMPLER_SEED)
+    sample_date = make_date_sampler(dados_reais_dlinear_input, seed=DATE_SAMPLER_SEED)
 
     # DataFrame final de métricas
     df_res = pd.DataFrame(columns=["tipo_dado", "metrica", "valor", "nc", "epochs", "seed"])
@@ -51,11 +59,11 @@ def main():
         if n_synth == 0:
             continue
 
-        for run in range(NUM_EXECUCOES):
+        for run in range(NUM_RUNS):
             seed = torch.initial_seed() + nc + run
             torch.manual_seed(seed); np.random.seed(seed)
             rng = np.random.default_rng(seed)
-            print(f"  Execução {run+1}/{NUM_EXECUCOES} | seed={seed}")
+            print(f"  Execução {run+1}/{NUM_RUNS} | seed={seed}")
 
             # ---------- geração sintética ----------
             s_raw  = synth_samples_cod1(gmm, n_synth, gmm_scaler, GMM_FEATURES)
@@ -78,8 +86,8 @@ def main():
                 "synthetic"     : s_dlin,
                 "real+synthetic": real_plus,
             }
-            prepared = {k: _prep(v) for k, v in groups.items()}
-            pairs    = {k: build_pairs_df(v) for k, v in prepared.items()}
+            prepared = {k: preprocess_trip_dataframe(v) for k, v in groups.items()}
+            pairs    = {k: build_input_target_pairs(v) for k, v in prepared.items()}
 
             # ---------- treino DLinear ----------
             for epochs in [50, 80, 100, 150, 200, 250]:
@@ -89,9 +97,9 @@ def main():
                     if tr.empty or va.empty:
                         continue
 
-                    Xtr = tr[[f"h{k}_train" for k in range(WINDOW)]].values.astype(np.float32)
+                    Xtr = tr[[f"h{k}_train" for k in range(INPUT_WINDOW)]].values.astype(np.float32)
                     ytr = tr["target_train"].values.astype(np.float32)
-                    Xva = va[[f"h{k}_val"   for k in range(WINDOW)]].values.astype(np.float32)
+                    Xva = va[[f"h{k}_val"   for k in range(INPUT_WINDOW)]].values.astype(np.float32)
                     yva = va["target_val"].values.astype(np.float32)
                     if not Xtr.size or not Xva.size:
                         continue
@@ -100,7 +108,7 @@ def main():
                     Xv  = torch.tensor(apply_growth_weighting(Xva))
                     yt  = torch.tensor(ytr); yv = torch.tensor(yva)
 
-                    mdl = DLinear(input_len=WINDOW)
+                    mdl = DLinear(input_len=INPUT_WINDOW)
                     train_model(mdl, Xt, yt, Xv, yv, epochs=epochs, lr=0.01, patience=10)
 
                     with torch.no_grad():
