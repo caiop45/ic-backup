@@ -184,8 +184,9 @@ def prepare_and_group_datasets(
     """
     # É uma boa prática trabalhar com cópias para evitar efeitos colaterais
     # nos DataFrames originais fora da função.
-    real_copy = real_data.copy()
-    synthetic_copy = synthetic_data.copy()
+    real_copy = real_data.copy(deep = True)
+    synthetic_copy = synthetic_data.copy(deep = True)
+    eval_real_data = eval_real_data.copy(deep=True)
 
     real_copy['tpep_pickup_datetime'] = pd.to_datetime(
         real_copy['tpep_pickup_datetime']

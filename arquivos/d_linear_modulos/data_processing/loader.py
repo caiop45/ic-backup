@@ -35,10 +35,15 @@ def load_real_data():
         "PU_longitude", "PU_latitude",
         "DO_longitude", "DO_latitude",
     ]
+    DATASAMPLER_FEATURES =  [ "tpep_pickup_datetime",
+        "sin_hr", "cos_hr",
+        "PU_longitude", "PU_latitude",
+        "DO_longitude", "DO_latitude",
+    ]
     dados_reais_gmm = df[GMM_FEATURES].dropna().astype(np.float32)
   # dados_reais_dlinear_input = df[["tpep_pickup_datetime", "hour_of_day", "trip_count"]].copy()
     dados_reais_dlinear_input = df.copy()
-    return df, dados_reais_gmm, dados_reais_dlinear_input, hour_counts_dict_real, GMM_FEATURES
+    return df, dados_reais_gmm, dados_reais_dlinear_input, hour_counts_dict_real, GMM_FEATURES, DATASAMPLER_FEATURES
 
 def split_dataset_weekly(
     df: pd.DataFrame,

@@ -88,19 +88,17 @@ def fit_gmm_bic_optuna(
             covariance_regularization=cov_reg,
             trainer_params={"max_epochs": 200, "accelerator": "auto", "devices": 1},
         )
-        gmm.fit(X_scaled)
+        try:
+            gmm.fit(X_scaled)
+        except (torch._C._LinAlgError, RuntimeError):
+            # descarta o trial; Optuna continua
+            raise optuna.TrialPruned()
 
         bic_val = _calculate_bic(gmm, X_scaled)
         aic_val = _calculate_aic(gmm, X_scaled)
 
-        # --- garante valores válidos/finitos ---
-        if not np.isfinite(bic_val):
-            bic_val = float("inf")
-        if not np.isfinite(aic_val):
-            aic_val = float("inf")
-
         trial.set_user_attr("aic", aic_val)
-        return bic_val
+        return bic_val         
 
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction="minimize", sampler=sampler)

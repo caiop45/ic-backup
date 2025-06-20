@@ -4,11 +4,11 @@ import os
 # CONFIGURAÇÕES GERAIS
 # --------------------------------------------------
 INPUT_WINDOW         = 4           # number of hours used as DLinear input
-SYNTHETIC_MULTIPLIER = 5           # oversampling factor for synthetic data
+SYNTHETIC_MULTIPLIER = 2          # oversampling factor for synthetic data
 SAVE_DIR             = "/home/caioloss/arquivos/d_linear_modulos/save_data"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-NUM_RUNS             = 1
+NUM_RUNS             = 15
 DATE_SAMPLER_SEED    = 23          # seed for the date sampler
 
 # Ruídos (Código 1)

@@ -75,6 +75,7 @@ def group_trips_by_zone(
             f"{sorted(zonas_desconhecidas)}"
         )
     # 2. Pivot table: soma de viagens por hora × zona
+
     pivot_df = pd.pivot_table(
         df,
         values="trip_count",

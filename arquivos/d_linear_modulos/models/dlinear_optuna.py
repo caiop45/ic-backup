@@ -14,7 +14,7 @@ def optimize_dlinear(
     input_dim: int,
     output_dim: int,
     seq_len: int,
-    n_trials: int = 50,
+    n_trials: int = 100,
     seed: int | None = None,
 ):
     """Optimize DLinear hyperparameters using Optuna.
@@ -27,8 +27,8 @@ def optimize_dlinear(
     device = 'cuda:0'
 
     def objective(trial: optuna.Trial):
-        lr = trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True)
-        batch = trial.suggest_int("batch_size", 32, 128, step=32)
+        lr = trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True)
+        batch = trial.suggest_int("batch_size", 512, 1024, step=128)
         epochs = trial.suggest_int("epochs", 50, 400, step=50)
 
         model = DLinearModel(input_dim=input_dim, output_dim=output_dim, seq_len=seq_len).to(device)

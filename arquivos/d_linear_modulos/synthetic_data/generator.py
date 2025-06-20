@@ -5,13 +5,21 @@ from utils.helpers import decode_hour_from_sincos, decode_time_from_sincos
 from typing import Sequence
 
 # ---------- amostragem do GMM ---------- #
-def gen_synth_data(gmm, n_samples, scaler, feature_names):
+def gen_synth_data(gmm, n_samples, scaler, feature_names, sample_date):
     synth_scaled = gmm.sample(n_samples).cpu().numpy()
     df = pd.DataFrame(scaler.inverse_transform(synth_scaled), columns=feature_names)
     df["hour_of_day"] = decode_time_from_sincos(df["sin_hr"], df["cos_hr"])
     df["trip_count"] = 1
-    return df
 
+    df["tpep_pickup_datetime"] = (
+        df["hour_of_day"].dt.hour.astype(int).apply(sample_date)
+        + pd.to_timedelta(
+            df["hour_of_day"].dt.strftime("%H:%M:%S")
+        )
+    )
+    df = df.sort_values("tpep_pickup_datetime").reset_index(drop=True)
+    df = df.dropna(subset=["tpep_pickup_datetime"])
+    return df
 # ---------- equal-freq por hora ---------- #
 def equal_freq(s_df, hour_counts_real, rng):
     parts = []

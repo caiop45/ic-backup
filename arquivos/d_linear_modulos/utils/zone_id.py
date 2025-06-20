@@ -1,82 +1,74 @@
 import cupy as cp
 import pandas as pd
 import geopandas as gpd
-
+import warnings
 import cupy as cp
 import pandas as pd
 import geopandas as gpd
 from collections.abc import Iterable  # ⇦ novo
 
+
 def assign_zone_names(
     df: pd.DataFrame,
-    taxi_zones_path: str = '/home-ext/caioloss/Dados/taxi-zones',
-    pu_id: int | Iterable[int] | None = None,   # ⇦ aceita int ou iterável
-    do_id: int | Iterable[int] | None = None,   # ⇦ idem
+    taxi_zones_path: str = "/home-ext/caioloss/Dados/taxi-zones",
+    pu_id: int | Iterable[int] | None = None,
+    do_id: int | Iterable[int] | None = None,
 ) -> pd.DataFrame:
     """
-    Adiciona as colunas PULocationID/DOLocationID (nomes das zonas) e,
-    opcionalmente, filtra o DataFrame pelos IDs fornecidos.
-
-    Parameters
-    ----------
-    df : DataFrame
-        Dados com colunas de latitude/longitude de PU e DO.
-    taxi_zones_path : str
-        Caminho para o shapefile GeoJSON das zonas de táxi da TLC.
-    pu_id, do_id : int ou iterável de int, opcional
-        IDs a serem mantidos. Se pu_id for passado filtra por PU; caso
-        contrário, se do_id for passado filtra por DO.
+    Atribui IDs/nome das zonas aos pontos de PU/DO e, opcionalmente,
+    filtra pelos IDs fornecidos.
     """
-    # ──────────────────────────────────────────────────────────────
-    # 1. GeoDataFrame + mapeamento ID → nome de zona
-    # ──────────────────────────────────────────────────────────────
-    gdf = gpd.read_file(taxi_zones_path)[['LocationID', 'zone', 'geometry']]
-    gdf = gdf.to_crs(epsg=4326)
-
-    id2zone = gdf.set_index('LocationID')['zone'].to_dict()
-
-    gdf['bounds'] = gdf.geometry.bounds.apply(
-        lambda row: (row.minx, row.miny, row.maxx, row.maxy), axis=1
+    # ─────────────────────────────── 1. Polígonos das zonas
+    gdf = (
+    gpd.read_file(taxi_zones_path)[["LocationID", "zone", "geometry"]]
+    .to_crs(epsg=4326)
+    .assign(_area=lambda df: df.geometry.area)   # ① calcula área
+    .sort_values("_area")                        # ② pequenos → grandes
     )
-    zone_ids    = gdf['LocationID'].values
-    zone_bounds = gdf['bounds'].tolist()
+    id2zone = gdf.set_index("LocationID")["zone"].to_dict()
+    gdf["bounds"] = gdf.geometry.bounds.apply(
+        lambda r: (r.minx, r.miny, r.maxx, r.maxy), axis=1
+    )
 
-    # ──────────────────────────────────────────────────────────────
-    # 2. Busca espacial na GPU
-    # ──────────────────────────────────────────────────────────────
-    pu_lon = cp.asarray(df['PU_longitude'].values)
-    pu_lat = cp.asarray(df['PU_latitude'].values)
-    do_lon = cp.asarray(df['DO_longitude'].values)
-    do_lat = cp.asarray(df['DO_latitude'].values)
+    zone_ids    = gdf["LocationID"].to_numpy()
+    zone_bounds = gdf["bounds"].tolist()
+
+    # ─────────────────────────────── 2. Pontos na GPU
+    pu_lon = cp.asarray(df["PU_longitude"].to_numpy())
+    pu_lat = cp.asarray(df["PU_latitude"].to_numpy())
+    do_lon = cp.asarray(df["DO_longitude"].to_numpy())
+    do_lat = cp.asarray(df["DO_latitude"].to_numpy())
 
     pu_ids = cp.full(pu_lon.shape, -1, dtype=cp.int32)
     do_ids = cp.full(do_lon.shape, -1, dtype=cp.int32)
 
-    for idx, (minx, miny, maxx, maxy) in enumerate(zone_bounds):
-        zid = zone_ids[idx]
-        pu_ids = cp.where(
-            (pu_lon >= minx) & (pu_lon <= maxx) & (pu_lat >= miny) & (pu_lat <= maxy),
-            zid,
-            pu_ids,
+    # ── loop: só preenche quem ainda está −1  ← ALTERAÇÃO CRÍTICA
+    for zid, (minx, miny, maxx, maxy) in zip(zone_ids, zone_bounds):
+        pu_mask = (
+            (pu_ids == -1)
+            & (pu_lon >= minx) & (pu_lon <= maxx)
+            & (pu_lat >= miny) & (pu_lat <= maxy)
         )
-        do_ids = cp.where(
-            (do_lon >= minx) & (do_lon <= maxx) & (do_lat >= miny) & (do_lat <= maxy),
-            zid,
-            do_ids,
+        do_mask = (
+            (do_ids == -1)
+            & (do_lon >= minx) & (do_lon <= maxx)
+            & (do_lat >= miny) & (do_lat <= maxy)
         )
+        pu_ids = cp.where(pu_mask, zid, pu_ids)
+        do_ids = cp.where(do_mask, zid, do_ids)
+
+        # break antecipado: todos atribuídos
+        if not (pu_ids == -1).any() and not (do_ids == -1).any():
+            break
 
     # volta para CPU
-    df['PULocationID'] = cp.asnumpy(pu_ids)
-    df['DOLocationID'] = cp.asnumpy(do_ids)
+    df["PULocationID"] = cp.asnumpy(pu_ids)
+    df["DOLocationID"] = cp.asnumpy(do_ids)
 
-    # ──────────────────────────────────────────────────────────────
-    # 3. Filtro flexível por lista ou valor único  ← ALTERAÇÃO
-    # ──────────────────────────────────────────────────────────────
+    # ─────────────────────────────── 3. Filtro opcional
     def _normalize(x):
-        """Converte None → None, int → [int], iterável → list(iterável)."""
         if x is None:
             return None
-        # string não é aceita; precisamos de ints
         if isinstance(x, int):
             return [x]
         if isinstance(x, Iterable):
@@ -87,15 +79,17 @@ def assign_zone_names(
     do_ids_filter = _normalize(do_id)
 
     if pu_ids_filter is not None:
-        df = df[df['PULocationID'].isin(pu_ids_filter)].copy()
+        df = df[df["PULocationID"].isin(pu_ids_filter)].copy()
+        if df.empty:
+            warnings.warn(f"Nenhum ponto encontrado para PU {pu_ids_filter}.")
     elif do_ids_filter is not None:
-        df = df[df['DOLocationID'].isin(do_ids_filter)].copy()
+        df = df[df["DOLocationID"].isin(do_ids_filter)].copy()
+        if df.empty:
+            warnings.warn(f"Nenhum ponto encontrado para DO {do_ids_filter}.")
 
-    # ──────────────────────────────────────────────────────────────
-    # 4. Converte IDs numéricos → nomes das zonas
-    # ──────────────────────────────────────────────────────────────
-    df['PULocationID'] = df['PULocationID'].map(id2zone)
-    df['DOLocationID'] = df['DOLocationID'].map(id2zone)
+    # ─────────────────────────────── 4. IDs → nomes
+    df["PULocationID"] = df["PULocationID"].map(id2zone)
+    df["DOLocationID"] = df["DOLocationID"].map(id2zone)
 
     return df
 
