@@ -17,8 +17,8 @@ def load_real_data():
     # 2024-01/02 | seg-qua
     df = df[
         (df["tpep_pickup_datetime"].dt.year == 2024) &
-        (df["tpep_pickup_datetime"].dt.month.isin([1, 2])) &
-        (df["tpep_pickup_datetime"].dt.dayofweek.between(0, 2))
+        (df["tpep_pickup_datetime"].dt.month.isin([1, 2, 3, 4])) &
+        (df["tpep_pickup_datetime"].dt.dayofweek.between(0, 5))
     ]
 
     df["hour_of_day"] = df["tpep_pickup_datetime"].dt.hour

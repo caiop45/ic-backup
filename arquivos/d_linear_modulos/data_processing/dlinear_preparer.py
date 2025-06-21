@@ -190,13 +190,13 @@ def prepare_and_group_datasets(
 
     real_copy['tpep_pickup_datetime'] = pd.to_datetime(
         real_copy['tpep_pickup_datetime']
-    ).dt.floor('15min')
+    ).dt.floor('30min')
     synthetic_copy['tpep_pickup_datetime'] = pd.to_datetime(
         synthetic_copy['tpep_pickup_datetime']
-    ).dt.floor('15min')
+    ).dt.floor('30min')
     eval_real_data['tpep_pickup_datetime'] = pd.to_datetime(
         eval_real_data['tpep_pickup_datetime']
-    ).dt.floor('15min')
+    ).dt.floor('30min')
 
     # 1. Cria o DataFrame híbrido combinando os dados reais e sintéticos
     hybrid_data = pd.concat([real_copy, synthetic_copy], ignore_index=True)
@@ -239,3 +239,89 @@ def prepare_and_group_datasets(
 
     # 3. Retorna os três DataFrames agrupados na ordem especificada
     return hybrid_grouped, real_grouped, synth_grouped, eval_grouped
+
+##FUNÇÃO DE CIMA COM NORMALIZAÇÃO (0,1)
+
+""" def prepare_and_group_datasets(
+    real_data: pd.DataFrame,
+    synthetic_data: pd.DataFrame,
+    eval_real_data: pd.DataFrame,
+    *,
+    only_existing_zones: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    
+    Agrupa (zona) e aplica padronização *min-max* (>0) coluna-a-coluna.
+
+    Retorna:
+        hybrid_grouped, real_grouped, synth_grouped, eval_grouped
+    
+    # -------------------- 1. Pré-processo -------------------- #
+    real_copy       = real_data.copy(deep=True)
+    synthetic_copy  = synthetic_data.copy(deep=True)
+    eval_copy       = eval_real_data.copy(deep=True)
+
+    for df in (real_copy, synthetic_copy, eval_copy):
+        df["tpep_pickup_datetime"] = (
+            pd.to_datetime(df["tpep_pickup_datetime"]).dt.floor("15min")
+        )
+
+    # -------------------- 2. Agrupamento por zona ------------ #
+    hybrid_data = pd.concat([real_copy, synthetic_copy], ignore_index=True)
+
+    if only_existing_zones:
+        cor_df        = pd.read_csv(ZONE_CORRELATION_CSV, dtype={"LocationID": "int32"})
+        all_zones     = cor_df["zone"].tolist()
+        existing_set  = set(hybrid_data["PULocationID"].dropna().unique())
+        zones_allowed = [z for z in all_zones if z in existing_set]
+    else:
+        zones_allowed = None
+
+    real_grouped   = group_trips_by_zone(real_copy,   expected_zones=zones_allowed)
+    synth_grouped  = group_trips_by_zone(synthetic_copy, expected_zones=zones_allowed)
+    hybrid_grouped = group_trips_by_zone(hybrid_data, expected_zones=zones_allowed)
+    eval_grouped   = group_trips_by_zone(eval_copy, expected_zones=zones_allowed)
+
+    # -------------------- 3. PADRONIZAÇÃO (>0) ---------------- #
+    concat_all = pd.concat(
+        [real_grouped, synth_grouped, eval_grouped], ignore_index=True
+    )
+
+    tiny = 1e-6  # deslocamento para garantir positividade
+
+    # min/max AGORA são calculados direto na coluna, sem agregação
+    numeric_cols = [
+        c for c in concat_all.columns if c not in {"tpep_pickup_datetime"}
+    ]
+    stats = {
+        col: (concat_all[col].min(), concat_all[col].max())
+        for col in numeric_cols
+    }
+
+    def _rescale(df: pd.DataFrame) -> pd.DataFrame:
+        for col, (mn, mx) in stats.items():
+            if col in df.columns:
+                rng = mx - mn if mx > mn else 1.0  # evita 0
+                df[col] = ((df[col] - mn) / rng) + tiny
+                df[col] = df[col].clip(lower=tiny)  # salvaguarda
+        return df
+
+    real_grouped   = _rescale(real_grouped)
+    synth_grouped  = _rescale(synth_grouped)
+    hybrid_grouped = _rescale(hybrid_grouped)
+    eval_grouped   = _rescale(eval_grouped)
+
+    # -------------------- 4. hour_of_day & saída -------------- #
+    def transform_timestamp_column(df: pd.DataFrame) -> pd.DataFrame:
+        return (
+            df.assign(hour_of_day=lambda inner:
+                      quarter_hour_index(inner["tpep_pickup_datetime"]))
+              .drop(columns=["tpep_pickup_datetime"])
+        )
+
+    hybrid_grouped = transform_timestamp_column(hybrid_grouped)
+    real_grouped   = transform_timestamp_column(real_grouped)
+    synth_grouped  = transform_timestamp_column(synth_grouped)
+    eval_grouped   = transform_timestamp_column(eval_grouped)
+
+    return hybrid_grouped, real_grouped, synth_grouped, eval_grouped
+ """

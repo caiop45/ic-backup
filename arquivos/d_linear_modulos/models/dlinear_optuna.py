@@ -5,6 +5,15 @@ from .dlinear import DLinearModel, train_model
 from utils.helpers import smape
 from evaluation.metrics import compute_metrics
 
+import optuna
+import torch
+from optuna.exceptions import TrialPruned
+
+# Supondo que seus imports estejam corretos
+from .dlinear import DLinearModel, train_model
+from utils.helpers import smape
+from evaluation.metrics import compute_metrics
+
 
 def optimize_dlinear(
     X_train: torch.Tensor,
@@ -17,56 +26,84 @@ def optimize_dlinear(
     n_trials: int = 100,
     seed: int | None = None,
 ):
-    """Optimize DLinear hyperparameters using Optuna.
-    ...
-    """
+    """Otimiza os hiperparâmetros do DLinear usando Optuna com poda e espaço de busca aprimorado."""
     
-    # 1. Defina o dispositivo aqui, para que ele esteja disponível para cada "trial"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Iniciando otimização no dispositivo: {device}")
-    device = 'cuda:0'
 
-    def objective(trial: optuna.Trial):
-        lr = trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True)
-        batch = trial.suggest_int("batch_size", 512, 1024, step=128)
-        epochs = trial.suggest_int("epochs", 50, 400, step=50)
-
-        model = DLinearModel(input_dim=input_dim, output_dim=output_dim, seq_len=seq_len).to(device)
+    def objective(trial: optuna.Trial) -> tuple[float, float]:
+        # --- [NOVO] Espaço de Busca Aprimorado ---
+        # 1. Parâmetros do otimizador e treinamento
+        lr = trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True)
+        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-3, log=True)
+        batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128, 256])
         
-        # 2. Passe o 'device' para a função de treino
-        train_model(
-            model,
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            epochs=epochs,
-            learning_rate=lr,
-            batch_size=batch
-           # device=device
-        )
+        # 2. Parâmetros da arquitetura do modelo
+        kernel_size = trial.suggest_int("kernel_size", 3, 31, step=2) # Kernels ímpares
+        
+        # 3. Parâmetros de controle do treinamento
+        epochs = trial.suggest_int("epochs", 50, 200, step=50)
+        patience = trial.suggest_int("patience", 5, 20)
 
-        # Após o treino, o modelo já está no 'device' correto.
-        # Agora, para fazer a predição, os dados também precisam estar lá.
+        # Criação do modelo com parâmetros dinâmicos
+        model = DLinearModel(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            seq_len=seq_len,
+            kernel_size=kernel_size
+        ).to(device)
+        
+        try:
+            # --- [IMPORTANTE] Modificação para suportar Pruning ---
+            # O 'trial' do Optuna é passado para a função de treino
+            train_model(
+                model,
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                epochs=epochs,
+                learning_rate=lr,
+                batch_size=batch_size,
+                patience=patience,
+                weight_decay=weight_decay, # [NOVO] Passando weight_decay
+                trial=trial                # [NOVO] Passando o objeto trial
+            )
+
+        except TrialPruned:
+            # Se o Optuna podar o trial, repassamos a exceção
+            raise
+
+        except Exception as e:
+            # Lidar com outros erros inesperados (ex: gradientes explodindo)
+            print(f"Trial falhou com uma exceção: {e}")
+            # Retorne valores muito ruins para que o Optuna descarte este trial
+            return -1.0, 1e9 # R² ruim, SMAPE ruim
+
+        # Avaliação final do modelo treinado
+        model.eval()
         with torch.no_grad():
-            # 3. Mova os dados de validação para o mesmo dispositivo do modelo
             pred_tensor = model(X_val.to(device))
-            
-            # Mova os resultados de volta para a CPU para usar com NumPy/Scikit-learn
             pred = pred_tensor.squeeze().cpu().numpy()
             true = y_val.squeeze().cpu().numpy()
 
         metrics = compute_metrics(true, pred)
-        r2 = metrics["R²"]
-        smape_val = smape(true, pred)
+        r2 = metrics.get("R²", -1.0) # Usar .get para evitar erro se a métrica falhar
+     #   mae = metrics.get("MAE", 1e9)
+        
+        # [MODIFICADO] Retorna as métricas que queremos otimizar
+        return r2
 
-        return r2, smape_val
-
+    # --- [NOVO] Configuração do Estudo com Pruner ---
     sampler = optuna.samplers.TPESampler(seed=seed)
-    study = optuna.create_study(directions=["maximize", "minimize"], sampler=sampler)
+    pruner = optuna.pruners.MedianPruner(n_warmup_steps=10) # Ignora as 10 primeiras épocas
     
-    # É uma boa prática rodar jobs de otimização na GPU em uma única thread (n_jobs=1)
-    # para evitar conflitos de alocação de memória na VRAM.
+    study = optuna.create_study(
+        directions=["maximize"], # Maximizar R² e Minimizar MAE
+        sampler=sampler,
+        pruner=pruner
+    )
+    
     study.optimize(objective, n_trials=n_trials, n_jobs=1) 
     
     return study

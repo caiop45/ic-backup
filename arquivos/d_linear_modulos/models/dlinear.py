@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 import time
-
+import optuna
+from optuna.exceptions import TrialPruned
 # -------------------------------------------
 # 1. IMPLEMENTAÇÃO COMPLETA DO DLINEAR
 # -------------------------------------------
@@ -73,7 +74,6 @@ class DLinearModel(nn.Module):
 # 2. FUNÇÃO DE TREINAMENTO MODULARIZADA
 #    (EXATAMENTE a que você já tinha)
 # -------------------------------------------
-
 def train_model(
     model: nn.Module,
     X_train: torch.Tensor,
@@ -84,12 +84,19 @@ def train_model(
     learning_rate: float = 1e-3,
     batch_size: int = 1024,
     patience: int | None = None,
-    min_delta: float = 0.0,              # ← novo
+    min_delta: float = 0.0,
     restore_best_weights: bool = True,
+    weight_decay: float = 0.0,           # <-- [NOVO] Parâmetro de regularização
+    trial: optuna.Trial | None = None,   # <-- [NOVO] Objeto do Optuna para poda
 ):
     device = next(model.parameters()).device
-    loss_fn  = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Recomenda-se usar PoissonNLLLoss para seus dados de contagem
+   # loss_fn = nn.PoissonNLLLoss(log_input=True)
+    loss_fn = nn.MSELoss() # Mantenha como alternativa para testes
+
+    # [MODIFICADO] Otimizador agora usa o weight_decay
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     train_loader = DataLoader(TensorDataset(X_train, y_train),
                               batch_size=batch_size, shuffle=True)
@@ -106,29 +113,34 @@ def train_model(
         t0 = time.time()
 
         # ---------- TREINO ----------
-        model.train(); running = 0.0
+        model.train()
+        running_train_loss = 0.0
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
             loss = loss_fn(model(xb), yb)
-            loss.backward(); optimizer.step()
-            running += loss.item()
-        epoch_train_loss = running / len(train_loader)
+            loss.backward()
+            optimizer.step()
+            running_train_loss += loss.item()
+        epoch_train_loss = running_train_loss / len(train_loader)
 
         # ---------- VALIDAÇÃO ----------
-        model.eval(); running = 0.0
+        model.eval()
+        running_val_loss = 0.0
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb, yb = xb.to(device), yb.to(device)
-                running += loss_fn(model(xb), yb).item()
-        epoch_val_loss = running / len(val_loader)
+                running_val_loss += loss_fn(model(xb), yb).item()
+        epoch_val_loss = running_val_loss / len(val_loader)
 
         history['train_loss'].append(epoch_train_loss)
         history['val_loss'].append(epoch_val_loss)
 
         # ---------- EARLY-STOP ----------
         if patience is not None:
-            if epoch_val_loss < best_val_loss - min_delta:     # ← usa min_delta
+            # A lógica de melhor valor é baseada na direção da 'loss'.
+            # Se a loss pode ser negativa (Poisson), a lógica se mantém: queremos o menor valor.
+            if epoch_val_loss < best_val_loss - min_delta:
                 best_val_loss = epoch_val_loss
                 best_state    = model.state_dict()
                 wait = 0
@@ -137,6 +149,17 @@ def train_model(
                 if wait >= patience:
                     print(f"Early stopping na época {epoch+1}.")
                     break
+        
+        # ---------- [NOVO] LÓGICA DE PODA (PRUNING) DO OPTUNA ----------
+        if trial:
+            # 1. Reporta a performance da época atual para o Optuna
+            trial.report(epoch_val_loss, epoch)
+
+            # 2. Verifica se este "trial" deve ser interrompido
+            if trial.should_prune():
+                torch.cuda.empty_cache() # Boa prática para limpar a memória da GPU
+                raise TrialPruned() # Levanta a exceção para o Optuna parar este trial
+        # ----------------------------------------------------------------
 
         if (epoch + 1) % 10 == 0 or epoch + 1 == epochs:
             print(f"Epoch [{epoch+1:>3}/{epochs}] "
@@ -150,7 +173,6 @@ def train_model(
         print(f"Pesos restaurados (best val_loss = {best_val_loss:.6f}).")
 
     return history
-
 # ------------------------------------------------------------------
 # EXEMPLO DE USO (mantém sua chamada original)
 # ------------------------------------------------------------------

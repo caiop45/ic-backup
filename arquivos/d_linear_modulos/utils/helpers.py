@@ -65,7 +65,7 @@ def group_trips_by_zone(
     # --------------------------------------------------------------------
     df = df.copy()
     df = df.dropna(subset=["PULocationID"])
-    df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"]).dt.floor("15min")
+    df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"]).dt.floor("30min")
     # 1. Verifica se todas as zonas do df estão mapeadas no CSV
     zonas_df = set(df["PULocationID"].unique())
     zonas_desconhecidas = zonas_df - _EXPECTED_SET
@@ -86,7 +86,7 @@ def group_trips_by_zone(
     full_range = pd.date_range(
         start=pivot_df.index.min(),
         end=pivot_df.index.max(),
-        freq="15min",
+        freq="30min",
         name=pivot_df.index.name,
     )
     pivot_df = pivot_df.reindex(full_range, fill_value=0)
