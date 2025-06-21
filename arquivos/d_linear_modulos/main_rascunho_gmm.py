@@ -27,6 +27,8 @@ from models.gmm_model import multiple_optuna_runs
 from models import DLinearModel, train_model, optimize_dlinear
 from evaluation.metrics              import compute_metrics
 from evaluation.plotting               import generate_plots, plot_hourly_trip_comparison, plot_random_pair_heatmaps, boxplot_model_eval
+from evaluation import sample_same_counts, compute_metrics as fidelity_metrics, make_all_plots
+import json
 
 from pycave.bayes import GaussianMixture
 from utils.helpers import decode_hour_from_sincos, group_trips_by_zone, smape, set_global_seed
@@ -124,6 +126,16 @@ def main() -> None:
         synth_raw_data = gen_synth_data(gmm, n_synth_samples, gmm_scaler, GMM_FEATURES, sample_date)
         synth_data = assign_zone_names(synth_raw_data, pu_id=target_zones)
         print(f"[DIAGNÓSTICO] Dados sintéticos gerados. Shape: {synth_data.shape}")
+
+        # ============================ FIDELITY-TO-REAL EVALUATION ============================
+        real_val_df = dados_reais_temporal_model_val.copy(deep=True)
+        balanced_syn = sample_same_counts(real_val_df, synth_data)
+        eval_results = fidelity_metrics(real_val_df, balanced_syn, seed=run_seed)
+        eval_dir = Path("arquivos/d_linear_modulos/save_data/eval")
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        with open(eval_dir / f"eval_metrics_seed_{run_seed}.json", "w") as f:
+            json.dump(eval_results, f, ensure_ascii=False, indent=2)
+        make_all_plots(real_val_df, balanced_syn, out_dir=eval_dir / f"seed_{run_seed}")
         
         # ============================ AGRUPAMENTO DE DATASETS ============================
         print("\n[DIAGNÓSTICO] Agrupando e preparando datasets (real, sintético, híbrido)...")
