@@ -15,12 +15,18 @@ from torch.utils.data import DataLoader, TensorDataset
 
 import optuna
 from optuna.pruners import MedianPruner
-
+from sklearn.preprocessing import StandardScaler
 from config import SYNTHETIC_MULTIPLIER
 from data_processing.loader import load_real_data, split_dataset_weekly
 from utils.helpers import decode_hour_from_sincos
 from models.vae import VAE
 
+LOCATION_COLS = [
+    "PU_longitude",
+    "PU_latitude",
+    "DO_longitude",
+    "DO_latitude",
+]
 
 # -------------------------------------------------
 # Utilitário: duplica stdout/stderr (console + arquivo)
@@ -157,7 +163,7 @@ def max_abs_percent_rel_diff(
 
 
 # -------------------------------------------------
-# Amostragem do VAE (sem scaler) + renormaliza círculo
+# Amostragem do VAE + renormaliza círculo
 # -------------------------------------------------
 def amostrar_do_vae(
     vae: VAE,
@@ -165,6 +171,7 @@ def amostrar_do_vae(
     *,
     batch_size: int = 100_000,
     device: str | torch.device = "cpu",
+    scaler: StandardScaler | None = None,
 ) -> pd.DataFrame:
     print(
         f"# DEBUG: Amostrando {n_amostras:,} pontos (batch={batch_size}) no {device}…"
@@ -182,12 +189,20 @@ def amostrar_do_vae(
             print(f"    · chunk {start + cur:,}/{n_amostras:,} pronto")
 
     synth = np.concatenate(chunks, axis=0)
-    synth_df = pd.DataFrame(synth, columns=["sin_hr", "cos_hr"])
+    synth_df = pd.DataFrame(
+        synth, columns=["sin_hr", "cos_hr"] + LOCATION_COLS
+    )
 
     # renormaliza para a circunferência unitária
     r = np.sqrt(synth_df["sin_hr"] ** 2 + synth_df["cos_hr"] ** 2)
     synth_df["sin_hr"] /= r
     synth_df["cos_hr"] /= r
+
+    if scaler is not None:
+        synth_df[LOCATION_COLS] = scaler.inverse_transform(
+            synth_df[LOCATION_COLS]
+        )
+
 
     synth_df["hora_do_dia"] = decode_hour_from_sincos(
         synth_df["sin_hr"], synth_df["cos_hr"]
@@ -199,12 +214,12 @@ def amostrar_do_vae(
 # -------------------------------------------------
 # Optuna objective
 # -------------------------------------------------
-def objective(trial, gmm_train, X_train, input_dim, device):
+def objective(trial, gmm_train, X_train, input_dim, device, scaler):
     n_layers = trial.suggest_int("n_layers", 1, 3)
     hidden = [
-        trial.suggest_int(f"units_l{i+1}", 16, 32, step=16) for i in range(n_layers)
+       trial.suggest_categorical(f"units_l{i+1}", [2, 4, 8, 16, 32, 64, 128, 256, 512]) for i in range(n_layers)
     ]#fazer o suggest_categorial usando o exponencial 16, 32, 64)
-    latent_dim = trial.suggest_int("latent_dim", 2, 16)
+    latent_dim =  trial.suggest_categorical("latent_dim", [2, 4, 8, 16, 32, 64, 128, 256, 512])
     epochs = trial.suggest_int("epochs", 50, 200, step=50)
     batch_size = trial.suggest_categorical("batch_size", [256, 512, 1024])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
@@ -224,13 +239,14 @@ def objective(trial, gmm_train, X_train, input_dim, device):
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
-        device=device,
+        device=device
     )
 
     synth_df = amostrar_do_vae(
         model,
         n_amostras=80_000,  # amostragem “rápida” só p/ métrica
         device=device,
+        scaler = scaler,
     )
     metric = max_abs_percent_rel_diff(synth_df, gmm_train)
     print(f"# DEBUG: Trial {trial.number} finalizado | max|Δ|={metric:.2f} pp\n")
@@ -254,7 +270,10 @@ def process_data():
     print(f"# DEBUG: gmm_train={len(gmm_train)} | gmm_val={len(gmm_val)}")
 
     # sem scaling
-    X_train = gmm_train[["sin_hr", "cos_hr"]].to_numpy(np.float32)
+    scaler = StandardScaler().fit(gmm_train[LOCATION_COLS])
+    X_train_df = gmm_train[["sin_hr", "cos_hr"] + LOCATION_COLS].copy()
+    X_train_df[LOCATION_COLS] = scaler.transform(X_train_df[LOCATION_COLS])
+    X_train = X_train_df.to_numpy(np.float32)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"# DEBUG: Dispositivo selecionado: {device}")
@@ -266,7 +285,7 @@ def process_data():
         pruner=MedianPruner(n_warmup_steps=1),
     )
     study.optimize(
-        lambda tr: objective(tr, gmm_train, X_train, X_train.shape[1], device),
+        lambda tr: objective(tr, gmm_train, X_train, X_train.shape[1], device, scaler),
         n_trials=30,
         show_progress_bar=True,
     )
@@ -290,7 +309,7 @@ def process_data():
         device=device,
     )
 
-    return vae_final, gmm_train
+    return vae_final, gmm_train, scaler
 
 
 # -------------------------------------------------
@@ -329,7 +348,7 @@ def comparar_distribuicao_horaria(
 # -------------------------------------------------
 def main():
     print("# DEBUG: Pipeline principal iniciado\n")
-    vae, gmm_train = process_data()
+    vae, gmm_train, scaler = process_data()
 
     n_synth = int(len(gmm_train) * SYNTHETIC_MULTIPLIER)
     if n_synth == 0:
@@ -345,12 +364,16 @@ def main():
         n_amostras=n_synth,
         device="cpu",
         batch_size=100_000,
+        scaler = scaler,
     )
 
     print("\n# DEBUG: Exemplo de dados sintéticos gerados")
     print(synth_df.head())
+    output_path = "/home-ext/caioloss/Dados/viagens_synth_vae.parquet"
+    synth_df.to_parquet(output_path, index=False)
+    print(f"# DEBUG: Dados sintéticos salvos em {output_path}")
 
-    comparar_distribuicao_horaria(synth_df, gmm_train)
+    #comparar_distribuicao_horaria(synth_df, gmm_train)
     print("\n# DEBUG: Pipeline concluído com sucesso!")
 
 
