@@ -1,0 +1,19 @@
+{
+    "num_components": 10,
+    "covariance_type": "diag",
+    "init_strategy": "kmeans",
+    "init_means": null,
+    "convergence_tolerance": 0.001,
+    "covariance_regularization": 0.0003621690660413341,
+    "batch_size": null,
+    "trainer_params": {
+        "logger": false,
+        "log_every_n_steps": 1,
+        "enable_progress_bar": true,
+        "enable_checkpointing": false,
+        "enable_model_summary": false,
+        "max_epochs": 400,
+        "accelerator": "auto",
+        "devices": 1
+    }
+}

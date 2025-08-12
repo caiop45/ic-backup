@@ -111,9 +111,17 @@ def main() -> None:
         groups = {
             "real":           dados_reais_temporal_model_train_grouped,
             "synthetic":      synth_data_grouped,
-            "real+synthetic": hybrid_temporal_model_train_grouped,
+            "real+synthetic": hybrid_temporal_model_train_grouped
         }
 
+        save_dir = Path("arquivos/d_linear_modulos/save_data/groups")
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        for name, df in groups.items():
+            out_path = save_dir / f"{name}_group.csv"
+            # se não quiser o índice no arquivo, use index=False
+            df.to_csv(out_path, index=False)
+            print(f"> Grupo '{name}' salvo em: {out_path}")
 
         # ─────────────────────────── DIAGNÓSTICO DOS DATASETS ───────────────────────────
         print("\n================ DIAGNÓSTICO: Datasets antes do DLinear ================")
@@ -191,7 +199,7 @@ def main() -> None:
             input_dim = X_train.shape[2]
             output_dim = y_train.shape[2]
 
-            study = optimize_dlinear(
+            """ study = optimize_dlinear(
                 X_train=X_train,
                 y_train=y_train,
                 X_val=X_val,
@@ -201,10 +209,16 @@ def main() -> None:
                 seq_len=seq_len,
                 n_trials=10,
                 seed=run_seed,
-            )
+            ) 
 
             best   = study.best_trials[0]
-            params = best.params
+             params = best.params
+           """
+            params = {
+            "epochs":        400,
+            "learning_rate": 3.396932572663065e-05,
+            "batch_size":    1024,
+          }
 
             model = DLinearModel(
                 input_dim=input_dim,
@@ -229,6 +243,39 @@ def main() -> None:
             with torch.no_grad():
                 preds = model(X_val.to(device)).cpu().numpy().flatten()
             true_vals = y_val.cpu().numpy().flatten()
+
+
+             # ### INÍCIO DO CÓDIGO ADICIONADO ###
+            # -------------------------------------------------------------------
+            print(f">>> Preparando dados de input/predição para salvar em CSV...")
+            
+            # Garante que o diretório de saída exista
+            save_predictions_dir = Path("arquivos/d_linear_modulos/save_data/predictions")
+            save_predictions_dir.mkdir(parents=True, exist_ok=True)
+            
+            prediction_results = []
+            # Itera sobre cada predição para capturar o input correspondente
+            for i in range(len(preds)):
+                # Pega a janela de input original (X_val[i]) que gerou a predição i
+                input_window_tensor = X_val[i]
+                
+                # Converte o tensor para uma lista de listas e depois para string
+                input_window_str = str(input_window_tensor.cpu().numpy().tolist())
+                
+                prediction_results.append({
+                    "input_window": input_window_str,
+                    "predicted_value": preds[i],
+                    "real_value": true_vals[i]
+                })
+
+            # Cria o DataFrame com os resultados
+            df_predictions = pd.DataFrame(prediction_results)
+            
+            # Define o caminho do arquivo e salva
+            predictions_csv_path = save_predictions_dir / f"predictions_{typ}_seed_{run_seed}.csv"
+            df_predictions.to_csv(predictions_csv_path, index=False, encoding='utf-8')
+            
+            print(f">>> Dados de predição para '{typ}' salvos em: {predictions_csv_path}")
 
             label_map = {
                 "real": "Real",

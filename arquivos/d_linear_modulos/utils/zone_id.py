@@ -1,11 +1,53 @@
-import cupy as cp
-import pandas as pd
-import geopandas as gpd
+# ─────────────────── utils/zone_id.py ───────────────────
+from __future__ import annotations
+import unidecode
 import warnings
+from collections.abc import Iterable
+from pathlib import Path
+import unicodedata
 import cupy as cp
-import pandas as pd
 import geopandas as gpd
-from collections.abc import Iterable  # ⇦ novo
+import pandas as pd
+
+# Caminho padrão para o GeoJSON das zonas TLC
+DEFAULT_TAXI_ZONES_PATH = "/home-ext/caioloss/Dados/taxi-zones"
+
+
+def _load_zones(taxi_zones_path: str) -> gpd.GeoDataFrame:
+    """Lê shapefile de zonas, padroniza CRS e nomes de colunas."""
+
+    path = Path(taxi_zones_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Taxi zones path not found: {taxi_zones_path}")
+
+    gdf = gpd.read_file(path)
+    print(f"[DEBUG] _load_zones | loaded {len(gdf)} polygons | CRS original: {gdf.crs}")
+
+    rename_map = {}
+    if "LocationID" in gdf.columns and "zone_id" not in gdf.columns:
+        rename_map["LocationID"] = "zone_id"
+    if "zone" in gdf.columns and "zone_name" not in gdf.columns:
+        rename_map["zone"] = "zone_name"
+    if rename_map:
+        gdf = gdf.rename(columns=rename_map)
+        print(f"[DEBUG] _load_zones | renomeou colunas {rename_map}")
+
+    if gdf.crs is None:
+        gdf = gdf.set_crs(4326)
+        print("[DEBUG] _load_zones | CRS definido para EPSG:4326")
+    elif gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(4326)
+        print("[DEBUG] _load_zones | reprojetado para EPSG:4326")
+
+    _TAXI_ZONES_CACHE = gdf
+    return gdf
+
+
+def _norm(text: str | None) -> str | None:
+    """Normaliza texto (lowercase, sem acento)."""
+    if text is None or pd.isna(text):
+        return None
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
 
 
 def assign_zone_names(
@@ -14,122 +56,79 @@ def assign_zone_names(
     pu_id: int | Iterable[int] | None = None,
     do_id: int | Iterable[int] | None = None,
 ) -> pd.DataFrame:
-    """
-    Atribui IDs/nome das zonas aos pontos de PU/DO e, opcionalmente,
-    filtra pelos IDs fornecidos.
-    """
-    # ─────────────────────────────── 1. Polígonos das zonas
-    gdf = (
-    gpd.read_file(taxi_zones_path)[["LocationID", "zone", "geometry"]]
-    .to_crs(epsg=4326)
-    .assign(_area=lambda df: df.geometry.area)   # ① calcula área
-    .sort_values("_area")                        # ② pequenos → grandes
+    """Anexa zone_id/zone_name a PU/DO, cria coluna OD e aplica filtros."""
+    print(f"[DEBUG] assign_zone_names | linhas de entrada: {len(df)}")
+    gdf = _load_zones(taxi_zones_path)
+
+    # Pickup -----------------------------------------------------------------
+    pu_points = gpd.GeoDataFrame(
+        df, geometry=gpd.points_from_xy(df["PU_longitude"], df["PU_latitude"]), crs=4326
     )
-    id2zone = gdf.set_index("LocationID")["zone"].to_dict()
-    gdf["bounds"] = gdf.geometry.bounds.apply(
-        lambda r: (r.minx, r.miny, r.maxx, r.maxy), axis=1
+    pu_join = gpd.sjoin(pu_points, gdf[["zone_id", "zone_name", "geometry"]], how="left")
+    df["PU_zone_id"] = pu_join["zone_id"].values
+    df["PU_zone_name"] = pu_join["zone_name"].values
+    print(f"[DEBUG] PU join | sem zona: {df['PU_zone_id'].isna().sum()}/{len(df)}")
+
+    # Drop-off ----------------------------------------------------------------
+    do_points = gpd.GeoDataFrame(
+        df, geometry=gpd.points_from_xy(df["DO_longitude"], df["DO_latitude"]), crs=4326
     )
+    do_join = gpd.sjoin(do_points, gdf[["zone_id", "zone_name", "geometry"]], how="left")
+    df["DO_zone_id"] = do_join["zone_id"].values
+    df["DO_zone_name"] = do_join["zone_name"].values
+    print(f"[DEBUG] DO join | sem zona: {df['DO_zone_id'].isna().sum()}/{len(df)}")
 
-    zone_ids    = gdf["LocationID"].to_numpy()
-    zone_bounds = gdf["bounds"].tolist()
+    # Filtros opcionais -------------------------------------------------------
+    if pu_id is not None:
+        before = len(df)
+        df = df[df["PU_zone_id"].isin(pu_id if isinstance(pu_id, Iterable) else [pu_id])]
+        print(f"[DEBUG] filtro PU_id | {before} ➞ {len(df)} linhas")
+    if do_id is not None:
+        before = len(df)
+        df = df[df["DO_zone_id"].isin(do_id if isinstance(do_id, Iterable) else [do_id])]
+        print(f"[DEBUG] filtro DO_id | {before} ➞ {len(df)} linhas")
 
-    # ─────────────────────────────── 2. Pontos na GPU
-    pu_lon = cp.asarray(df["PU_longitude"].to_numpy())
-    pu_lat = cp.asarray(df["PU_latitude"].to_numpy())
-    do_lon = cp.asarray(df["DO_longitude"].to_numpy())
-    do_lat = cp.asarray(df["DO_latitude"].to_numpy())
+    # Remove geometry temporária
+    if "geometry" in df.columns:
+        df = df.drop(columns="geometry")
 
-    pu_ids = cp.full(pu_lon.shape, -1, dtype=cp.int32)
-    do_ids = cp.full(do_lon.shape, -1, dtype=cp.int32)
+    # Coluna OD
+    df["OD"] = df.apply(lambda r: [_norm(r["PU_zone_name"]), _norm(r["DO_zone_name"])], axis=1)
 
-    # ── loop: só preenche quem ainda está −1  ← ALTERAÇÃO CRÍTICA
-    for zid, (minx, miny, maxx, maxy) in zip(zone_ids, zone_bounds):
-        pu_mask = (
-            (pu_ids == -1)
-            & (pu_lon >= minx) & (pu_lon <= maxx)
-            & (pu_lat >= miny) & (pu_lat <= maxy)
-        )
-        do_mask = (
-            (do_ids == -1)
-            & (do_lon >= minx) & (do_lon <= maxx)
-            & (do_lat >= miny) & (do_lat <= maxy)
-        )
-        pu_ids = cp.where(pu_mask, zid, pu_ids)
-        do_ids = cp.where(do_mask, zid, do_ids)
-
-        # break antecipado: todos atribuídos
-        if not (pu_ids == -1).any() and not (do_ids == -1).any():
-            break
-
-    # volta para CPU
-    df["PULocationID"] = cp.asnumpy(pu_ids)
-    df["DOLocationID"] = cp.asnumpy(do_ids)
-
-    # ─────────────────────────────── 3. Filtro opcional
-    def _normalize(x):
-        if x is None:
-            return None
-        if isinstance(x, int):
-            return [x]
-        if isinstance(x, Iterable):
-            return list(x)
-        raise TypeError("pu_id/do_id devem ser int ou iterável de int")
-
-    pu_ids_filter = _normalize(pu_id)
-    do_ids_filter = _normalize(do_id)
-
-    if pu_ids_filter is not None:
-        df = df[df["PULocationID"].isin(pu_ids_filter)].copy()
-        if df.empty:
-            warnings.warn(f"Nenhum ponto encontrado para PU {pu_ids_filter}.")
-    elif do_ids_filter is not None:
-        df = df[df["DOLocationID"].isin(do_ids_filter)].copy()
-        if df.empty:
-            warnings.warn(f"Nenhum ponto encontrado para DO {do_ids_filter}.")
-
-    # ─────────────────────────────── 4. IDs → nomes
-    df["PULocationID"] = df["PULocationID"].map(id2zone)
-    df["DOLocationID"] = df["DOLocationID"].map(id2zone)
-
+    print(f"[DEBUG] assign_zone_names | linhas de saída: {len(df)}\n")
     return df
+
+
 
 def filter_by_zone(
     df: pd.DataFrame,
     pu_id: int | Iterable[int] | None = None,
-    taxi_zones_path: str = "/home-ext/caioloss/Dados/taxi-zones",
+    taxi_zones_path: str = DEFAULT_TAXI_ZONES_PATH,
 ) -> pd.DataFrame:
     """
     Mantém apenas as linhas cujas coordenadas de embarque pertençam às zonas
-    listadas em ``pu_id``. Não adiciona nem remove colunas: devolve exatamente
-    o mesmo DataFrame (filtrado) que entrou.
+    listadas em `pu_id`. Retorna um DataFrame **sem colunas extras**.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Deve ter 'PU_latitude' e 'PU_longitude' em graus decimais (WGS-84).
+        Deve conter 'PU_latitude' e 'PU_longitude' em graus decimais (WGS-84).
     pu_id : int | Iterable[int] | None
         IDs de zona a manter. Se None, devolve df sem filtragem.
     taxi_zones_path : str
         Caminho para o GeoJSON das zonas TLC.
     """
-    # ─────────────── 1. Normalização da entrada ────────────────
-    def _normalize(x):
-        if x is None:
-            return None
-        if isinstance(x, int):
-            return [x]
-        if isinstance(x, Iterable):
-            return list(x)
-        raise TypeError("`pu_id` deve ser int ou iterável de int")
-
-    pu_ids = _normalize(pu_id)
+    pu_ids = _normalize_ids(pu_id)
     if pu_ids is None:
         return df.copy()
 
-    # ─────────────── 2. Carrega apenas as zonas desejadas ──────
+    # 1. Carrega apenas as zonas solicitadas
     gdf = (
-        gpd.read_file(taxi_zones_path)[["LocationID", "geometry"]]
-        .to_crs(epsg=4326)
+        gpd.read_file(
+            taxi_zones_path,
+            include_fields=["LocationID", "geometry"],
+        )
+        .set_crs(epsg=4326)
         .query("LocationID in @pu_ids")
     )
 
@@ -138,7 +137,7 @@ def filter_by_zone(
         lambda r: (r.minx, r.miny, r.maxx, r.maxy), axis=1
     ).tolist()
 
-    # ─────────────── 3. Busca espacial na GPU ──────────────────
+    # 2. Bounding-box na GPU
     pu_lon = cp.asarray(df["PU_longitude"].values)
     pu_lat = cp.asarray(df["PU_latitude"].values)
 
@@ -146,13 +145,16 @@ def filter_by_zone(
     tmp_ids = cp.full (pu_lon.shape, -1, dtype=cp.int32)
 
     for zid, (minx, miny, maxx, maxy) in zip(zone_ids, zone_bounds):
-        in_box  = (pu_lon >= minx) & (pu_lon <= maxx) & (pu_lat >= miny) & (pu_lat <= maxy)
-        mask   |= in_box                      # acumula qualquer acerto
-        tmp_ids = cp.where(in_box, zid, tmp_ids)
+        in_box  = (
+            (pu_lon >= minx) & (pu_lon <= maxx)
+            & (pu_lat >= miny) & (pu_lat <= maxy)
+        )
+        mask   |= in_box
+        tmp_ids = cp.where(in_box, zid, tmp_ids)  # opcional: diagnosticar
 
-    #Printa o número de viagens por ID filtrado
-    counts = {z: int((tmp_ids == z).sum()) for z in pu_ids}
+    # 3. Diagnóstico rápido
+    counts = {int(z): int((tmp_ids == z).sum()) for z in pu_ids}
     print("Contagem de linhas por PULocationID:", counts)
 
-    # ─────────────── 5. Retorno sem colunas extras ─────────────
+    # 4. Retorno sem colunas extras
     return df[cp.asnumpy(mask)].copy()
