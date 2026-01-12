@@ -1,802 +1,0 @@
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 5/1094700
-[DEBUG] DO join | sem zona: 25/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-  0%|          | 0/30 [00:00<?, ?it/s]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=6 | epochs=100 | batch_size=256 | lr=0.0021374409537448574
-[Epoch   1/100] recon+kld=0.387945
-[Epoch   2/100] recon+kld=0.338754
-[Epoch   3/100] recon+kld=0.337867
-[Epoch   4/100] recon+kld=0.337604
-[Epoch   5/100] recon+kld=0.337456
-[Epoch   6/100] recon+kld=0.337355
-[Epoch   7/100] recon+kld=0.337256
-[Epoch   8/100] recon+kld=0.336997
-[Epoch   9/100] recon+kld=0.336604
-[Epoch  10/100] recon+kld=0.336527
-[Epoch  11/100] recon+kld=0.336502
-[Epoch  12/100] recon+kld=0.336472
-[Epoch  13/100] recon+kld=0.336447
-[Epoch  14/100] recon+kld=0.336434
-[Epoch  15/100] recon+kld=0.336399
-[Epoch  16/100] recon+kld=0.336392
-[Epoch  17/100] recon+kld=0.336397
-[Epoch  18/100] recon+kld=0.336383
-[Epoch  19/100] recon+kld=0.336376
-[Epoch  20/100] recon+kld=0.336340
-[Epoch  21/100] recon+kld=0.336341
-[Epoch  22/100] recon+kld=0.336315
-[Epoch  23/100] recon+kld=0.336330
-[Epoch  24/100] recon+kld=0.336302
-[Epoch  25/100] recon+kld=0.336314
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 422396/1094700
-[DEBUG] DO join | sem zona: 344161/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                      [I 2025-08-04 16:18:46,472] Trial 0 finished with value: 0.379306557606892 and parameters: {'n_layers': 3, 'units_l1': 2, 'latent_dim': 6, 'epochs': 100, 'batch_size': 256, 'lr': 0.0021374409537448574}. Best is trial 0 with value: 0.379306557606892.
-  0%|          | 0/30 [08:09<?, ?it/s]Best trial: 0. Best value: 0.379307:   0%|          | 0/30 [08:09<?, ?it/s]Best trial: 0. Best value: 0.379307:   3%|3         | 1/30 [08:09<3:56:41, 489.72s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=5 | epochs=50 | batch_size=256 | lr=0.0007682155092070594
-[Epoch   1/50] recon+kld=0.634354
-[Epoch   2/50] recon+kld=0.518371
-[Epoch   3/50] recon+kld=0.516693
-[Epoch   4/50] recon+kld=0.374706
-[Epoch   5/50] recon+kld=0.337068
-[Epoch   6/50] recon+kld=0.313405
-[Epoch   7/50] recon+kld=0.298445
-[Epoch   8/50] recon+kld=0.287774
-[Epoch   9/50] recon+kld=0.280761
-[Epoch  10/50] recon+kld=0.277766
-[Epoch  11/50] recon+kld=0.276668
-[Epoch  12/50] recon+kld=0.276147
-[Epoch  13/50] recon+kld=0.275798
-[Epoch  14/50] recon+kld=0.275614
-[Epoch  15/50] recon+kld=0.275412
-[Epoch  16/50] recon+kld=0.275250
-[Epoch  17/50] recon+kld=0.274969
-[Epoch  18/50] recon+kld=0.274744
-[Epoch  19/50] recon+kld=0.274648
-[Epoch  20/50] recon+kld=0.274634
-[Epoch  21/50] recon+kld=0.274597
-[Epoch  22/50] recon+kld=0.274562
-[Epoch  23/50] recon+kld=0.274536
-[Epoch  24/50] recon+kld=0.274482
-[Epoch  25/50] recon+kld=0.274472
-[Epoch  26/50] recon+kld=0.274465
-[Epoch  27/50] recon+kld=0.274396
-[Epoch  28/50] recon+kld=0.274349
-[Epoch  29/50] recon+kld=0.274329
-[Epoch  30/50] recon+kld=0.274300
-[Epoch  31/50] recon+kld=0.274250
-[Epoch  32/50] recon+kld=0.274205
-[Epoch  33/50] recon+kld=0.274173
-[Epoch  34/50] recon+kld=0.274098
-[Epoch  35/50] recon+kld=0.274052
-[Epoch  36/50] recon+kld=0.273974
-[Epoch  37/50] recon+kld=0.273880
-[Epoch  38/50] recon+kld=0.273699
-[Epoch  39/50] recon+kld=0.273110
-[Epoch  40/50] recon+kld=0.270631
-[Epoch  41/50] recon+kld=0.267829
-[Epoch  42/50] recon+kld=0.263703
-[Epoch  43/50] recon+kld=0.244248
-[Epoch  44/50] recon+kld=0.236193
-[Epoch  45/50] recon+kld=0.235146
-[Epoch  46/50] recon+kld=0.234641
-[Epoch  47/50] recon+kld=0.234232
-[Epoch  48/50] recon+kld=0.233837
-[Epoch  49/50] recon+kld=0.233461
-[Epoch  50/50] recon+kld=0.233259
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 40776/1094700
-[DEBUG] DO join | sem zona: 247574/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                      [I 2025-08-04 16:36:49,535] Trial 1 finished with value: 0.3718748947450349 and parameters: {'n_layers': 3, 'units_l1': 4, 'units_l2': 2, 'latent_dim': 5, 'epochs': 50, 'batch_size': 256, 'lr': 0.0007682155092070594}. Best is trial 1 with value: 0.3718748947450349.
-Best trial: 0. Best value: 0.379307:   3%|3         | 1/30 [26:12<3:56:41, 489.72s/it]Best trial: 1. Best value: 0.371875:   3%|3         | 1/30 [26:12<3:56:41, 489.72s/it]Best trial: 1. Best value: 0.371875:   7%|6         | 2/30 [26:12<6:31:24, 838.74s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=6 | epochs=150 | batch_size=256 | lr=0.0010933475315460474
-[Epoch   1/150] recon+kld=0.250814
-[Epoch   2/150] recon+kld=0.125996
-[Epoch   3/150] recon+kld=0.124845
-[Epoch   4/150] recon+kld=0.124545
-[Epoch   5/150] recon+kld=0.124055
-[Epoch   6/150] recon+kld=0.123851
-[Epoch   7/150] recon+kld=0.123824
-[Epoch   8/150] recon+kld=0.123797
-[Epoch   9/150] recon+kld=0.123756
-[Epoch  10/150] recon+kld=0.123764
-[Epoch  11/150] recon+kld=0.123732
-[Epoch  12/150] recon+kld=0.123732
-[Epoch  13/150] recon+kld=0.123714
-[Epoch  14/150] recon+kld=0.123686
-[Epoch  15/150] recon+kld=0.123691
-[Epoch  16/150] recon+kld=0.123662
-[Epoch  17/150] recon+kld=0.123657
-[Epoch  18/150] recon+kld=0.123658
-[Epoch  19/150] recon+kld=0.123647
-[Epoch  20/150] recon+kld=0.123642
-[Epoch  21/150] recon+kld=0.123627
-[Epoch  22/150] recon+kld=0.123626
-[Epoch  23/150] recon+kld=0.123609
-[Epoch  24/150] recon+kld=0.123601
-[Epoch  25/150] recon+kld=0.123593
-[Epoch  26/150] recon+kld=0.123586
-[Epoch  27/150] recon+kld=0.123590
-[Epoch  28/150] recon+kld=0.123580
-[Epoch  29/150] recon+kld=0.123573
-[Epoch  30/150] recon+kld=0.123566
-[Epoch  31/150] recon+kld=0.123567
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 589175/1094700
-[DEBUG] DO join | sem zona: 377196/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                      [I 2025-08-04 16:46:49,754] Trial 2 finished with value: 0.13944912257780429 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 6, 'epochs': 150, 'batch_size': 256, 'lr': 0.0010933475315460474}. Best is trial 2 with value: 0.13944912257780429.
-Best trial: 1. Best value: 0.371875:   7%|6         | 2/30 [36:12<6:31:24, 838.74s/it]Best trial: 2. Best value: 0.139449:   7%|6         | 2/30 [36:12<6:31:24, 838.74s/it]Best trial: 2. Best value: 0.139449:  10%|#         | 3/30 [36:12<5:28:25, 729.83s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=2 | epochs=50 | batch_size=512 | lr=0.003657015812962041
-[Epoch   1/50] recon+kld=0.426559
-[Epoch   2/50] recon+kld=0.340978
-[Epoch   3/50] recon+kld=0.339811
-[Epoch   4/50] recon+kld=0.339442
-[Epoch   5/50] recon+kld=0.339213
-[Epoch   6/50] recon+kld=0.339032
-[Epoch   7/50] recon+kld=0.338942
-[Epoch   8/50] recon+kld=0.338900
-[Epoch   9/50] recon+kld=0.338837
-[Epoch  10/50] recon+kld=0.338822
-[Epoch  11/50] recon+kld=0.338787
-[Epoch  12/50] recon+kld=0.338788
-[Epoch  13/50] recon+kld=0.338761
-[Epoch  14/50] recon+kld=0.338769
-[Epoch  15/50] recon+kld=0.338741
-[Epoch  16/50] recon+kld=0.338737
-[Epoch  17/50] recon+kld=0.338743
-[Epoch  18/50] recon+kld=0.338746
-[Epoch  19/50] recon+kld=0.338715
-[Epoch  20/50] recon+kld=0.338727
-[Epoch  21/50] recon+kld=0.338712
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 333094/1094700
-[DEBUG] DO join | sem zona: 325750/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                      [I 2025-08-04 16:51:44,644] Trial 3 finished with value: 0.42063265983439435 and parameters: {'n_layers': 3, 'units_l1': 2, 'latent_dim': 2, 'epochs': 50, 'batch_size': 512, 'lr': 0.003657015812962041}. Best is trial 2 with value: 0.13944912257780429.
-Best trial: 2. Best value: 0.139449:  10%|#         | 3/30 [41:07<5:28:25, 729.83s/it]Best trial: 2. Best value: 0.139449:  10%|#         | 3/30 [41:07<5:28:25, 729.83s/it]Best trial: 2. Best value: 0.139449:  13%|#3        | 4/30 [41:07<4:01:51, 558.12s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=4 | epochs=200 | batch_size=1024 | lr=0.0021207746003249514
-[Epoch   1/200] recon+kld=0.501337
-[Epoch   2/200] recon+kld=0.346472
-[Epoch   3/200] recon+kld=0.342413
-[Epoch   4/200] recon+kld=0.340463
-[Epoch   5/200] recon+kld=0.339273
-[Epoch   6/200] recon+kld=0.338491
-[Epoch   7/200] recon+kld=0.338045
-[Epoch   8/200] recon+kld=0.337728
-[Epoch   9/200] recon+kld=0.337555
-[Epoch  10/200] recon+kld=0.337435
-[Epoch  11/200] recon+kld=0.337333
-[Epoch  12/200] recon+kld=0.337328
-[Epoch  13/200] recon+kld=0.337252
-[Epoch  14/200] recon+kld=0.337239
-[Epoch  15/200] recon+kld=0.337201
-[Epoch  16/200] recon+kld=0.337188
-[Epoch  17/200] recon+kld=0.337161
-[Epoch  18/200] recon+kld=0.337146
-[Epoch  19/200] recon+kld=0.337131
-[Epoch  20/200] recon+kld=0.337101
-[Epoch  21/200] recon+kld=0.337088
-[Epoch  22/200] recon+kld=0.337056
-[Epoch  23/200] recon+kld=0.337091
-[Epoch  24/200] recon+kld=0.337060
-[Epoch  25/200] recon+kld=0.337026
-[Epoch  26/200] recon+kld=0.337019
-[Epoch  27/200] recon+kld=0.337006
-[Epoch  28/200] recon+kld=0.336978
-[Epoch  29/200] recon+kld=0.336981
-[Epoch  30/200] recon+kld=0.336954
-[Epoch  31/200] recon+kld=0.336955
-[Epoch  32/200] recon+kld=0.336968
-[Epoch  33/200] recon+kld=0.336945
-[Epoch  34/200] recon+kld=0.336944
-[Epoch  35/200] recon+kld=0.336934
-[Epoch  36/200] recon+kld=0.336892
-[Epoch  37/200] recon+kld=0.336912
-[Epoch  38/200] recon+kld=0.336940
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 541698/1094700
-[DEBUG] DO join | sem zona: 527970/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                      [I 2025-08-04 16:58:25,804] Trial 4 finished with value: 0.38396063312877293 and parameters: {'n_layers': 1, 'units_l1': 2, 'latent_dim': 4, 'epochs': 200, 'batch_size': 1024, 'lr': 0.0021207746003249514}. Best is trial 2 with value: 0.13944912257780429.
-Best trial: 2. Best value: 0.139449:  13%|#3        | 4/30 [47:49<4:01:51, 558.12s/it]Best trial: 2. Best value: 0.139449:  13%|#3        | 4/30 [47:49<4:01:51, 558.12s/it]Best trial: 2. Best value: 0.139449:  17%|#6        | 5/30 [47:49<3:28:57, 501.52s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=4 | epochs=50 | batch_size=1024 | lr=0.0016600549140283623
-[Epoch   1/50] recon+kld=0.600729
-                                                                                      [I 2025-08-04 16:58:35,927] Trial 5 pruned. 
-Best trial: 2. Best value: 0.139449:  17%|#6        | 5/30 [47:59<3:28:57, 501.52s/it]Best trial: 2. Best value: 0.139449:  17%|#6        | 5/30 [47:59<3:28:57, 501.52s/it]Best trial: 2. Best value: 0.139449:  20%|##        | 6/30 [47:59<2:13:46, 334.44s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=6 | epochs=150 | batch_size=512 | lr=0.00030184133243867475
-[Epoch   1/150] recon+kld=0.763990
-                                                                                      [I 2025-08-04 16:58:48,716] Trial 6 pruned. 
-Best trial: 2. Best value: 0.139449:  20%|##        | 6/30 [48:11<2:13:46, 334.44s/it]Best trial: 2. Best value: 0.139449:  20%|##        | 6/30 [48:11<2:13:46, 334.44s/it]Best trial: 2. Best value: 0.139449:  23%|##3       | 7/30 [48:11<1:27:53, 229.29s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=4 | epochs=150 | batch_size=512 | lr=0.003857832078773621
-[Epoch   1/150] recon+kld=0.430665
-                                                                                      [I 2025-08-04 16:59:00,993] Trial 7 pruned. 
-Best trial: 2. Best value: 0.139449:  23%|##3       | 7/30 [48:24<1:27:53, 229.29s/it]Best trial: 2. Best value: 0.139449:  23%|##3       | 7/30 [48:24<1:27:53, 229.29s/it]Best trial: 2. Best value: 0.139449:  27%|##6       | 8/30 [48:24<58:44, 160.20s/it]  # DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=5 | epochs=200 | batch_size=512 | lr=0.0011041957749666244
-[Epoch   1/200] recon+kld=0.310236
-[Epoch   2/200] recon+kld=0.132901
-[Epoch   3/200] recon+kld=0.126248
-[Epoch   4/200] recon+kld=0.125597
-[Epoch   5/200] recon+kld=0.125351
-[Epoch   6/200] recon+kld=0.125212
-[Epoch   7/200] recon+kld=0.125099
-[Epoch   8/200] recon+kld=0.124669
-[Epoch   9/200] recon+kld=0.124428
-[Epoch  10/200] recon+kld=0.124357
-[Epoch  11/200] recon+kld=0.124308
-[Epoch  12/200] recon+kld=0.124288
-[Epoch  13/200] recon+kld=0.124271
-[Epoch  14/200] recon+kld=0.124266
-[Epoch  15/200] recon+kld=0.124230
-[Epoch  16/200] recon+kld=0.124221
-[Epoch  17/200] recon+kld=0.124227
-[Epoch  18/200] recon+kld=0.124231
-[Epoch  19/200] recon+kld=0.124207
-[Epoch  20/200] recon+kld=0.124198
-[Epoch  21/200] recon+kld=0.124186
-[Epoch  22/200] recon+kld=0.124178
-[Epoch  23/200] recon+kld=0.124171
-[Epoch  24/200] recon+kld=0.124165
-[Epoch  25/200] recon+kld=0.124158
-[Epoch  26/200] recon+kld=0.124135
-[Epoch  27/200] recon+kld=0.124130
-[Epoch  28/200] recon+kld=0.124138
-[Epoch  29/200] recon+kld=0.124114
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 732632/1094700
-[DEBUG] DO join | sem zona: 575034/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                    [I 2025-08-04 17:05:33,429] Trial 8 finished with value: 0.11346452609223227 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 5, 'epochs': 200, 'batch_size': 512, 'lr': 0.0011041957749666244}. Best is trial 8 with value: 0.11346452609223227.
-Best trial: 2. Best value: 0.139449:  27%|##6       | 8/30 [54:56<58:44, 160.20s/it]Best trial: 8. Best value: 0.113465:  27%|##6       | 8/30 [54:56<58:44, 160.20s/it]Best trial: 8. Best value: 0.113465:  30%|###       | 9/30 [54:56<1:21:28, 232.80s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=6 | epochs=50 | batch_size=512 | lr=0.00037256994213002433
-[Epoch   1/50] recon+kld=0.711397
-                                                                                      [I 2025-08-04 17:05:46,962] Trial 9 pruned. 
-Best trial: 8. Best value: 0.113465:  30%|###       | 9/30 [55:10<1:21:28, 232.80s/it]Best trial: 8. Best value: 0.113465:  30%|###       | 9/30 [55:10<1:21:28, 232.80s/it]Best trial: 8. Best value: 0.113465:  33%|###3      | 10/30 [55:10<55:02, 165.11s/it] # DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=2 | epochs=200 | batch_size=512 | lr=0.00013154482058860289
-[Epoch   1/200] recon+kld=0.837345
-                                                                                     [I 2025-08-04 17:05:59,244] Trial 10 pruned. 
-Best trial: 8. Best value: 0.113465:  33%|###3      | 10/30 [55:22<55:02, 165.11s/it]Best trial: 8. Best value: 0.113465:  33%|###3      | 10/30 [55:22<55:02, 165.11s/it]Best trial: 8. Best value: 0.113465:  37%|###6      | 11/30 [55:22<37:28, 118.34s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=5 | epochs=200 | batch_size=256 | lr=0.0007587829384289435
-[Epoch   1/200] recon+kld=0.321551
-[Epoch   2/200] recon+kld=0.132608
-[Epoch   3/200] recon+kld=0.125440
-[Epoch   4/200] recon+kld=0.125132
-[Epoch   5/200] recon+kld=0.124944
-[Epoch   6/200] recon+kld=0.124691
-[Epoch   7/200] recon+kld=0.124296
-[Epoch   8/200] recon+kld=0.124234
-[Epoch   9/200] recon+kld=0.124201
-[Epoch  10/200] recon+kld=0.124187
-[Epoch  11/200] recon+kld=0.124181
-[Epoch  12/200] recon+kld=0.124171
-[Epoch  13/200] recon+kld=0.124162
-[Epoch  14/200] recon+kld=0.124145
-[Epoch  15/200] recon+kld=0.124142
-[Epoch  16/200] recon+kld=0.124130
-[Epoch  17/200] recon+kld=0.124125
-[Epoch  18/200] recon+kld=0.124111
-[Epoch  19/200] recon+kld=0.124110
-[Epoch  20/200] recon+kld=0.124106
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 431287/1094700
-[DEBUG] DO join | sem zona: 312080/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                     [I 2025-08-04 17:12:38,438] Trial 11 finished with value: 0.15617449098994948 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 5, 'epochs': 200, 'batch_size': 256, 'lr': 0.0007587829384289435}. Best is trial 8 with value: 0.11346452609223227.
-Best trial: 8. Best value: 0.113465:  37%|###6      | 11/30 [1:02:01<37:28, 118.34s/it]Best trial: 8. Best value: 0.113465:  37%|###6      | 11/30 [1:02:01<37:28, 118.34s/it]Best trial: 8. Best value: 0.113465:  40%|####      | 12/30 [1:02:01<1:01:07, 203.78s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=5 | epochs=150 | batch_size=256 | lr=0.008062233803619907
-[Epoch   1/150] recon+kld=0.358923
-[Epoch   2/150] recon+kld=0.337670
-[Epoch   3/150] recon+kld=0.337384
-[Epoch   4/150] recon+kld=0.337229
-[Epoch   5/150] recon+kld=0.337192
-                                                                                         [I 2025-08-04 17:14:23,233] Trial 12 pruned. 
-Best trial: 8. Best value: 0.113465:  40%|####      | 12/30 [1:03:46<1:01:07, 203.78s/it]Best trial: 8. Best value: 0.113465:  40%|####      | 12/30 [1:03:46<1:01:07, 203.78s/it]Best trial: 8. Best value: 0.113465:  43%|####3     | 13/30 [1:03:46<49:14, 173.79s/it]  # DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=5 | epochs=100 | batch_size=256 | lr=0.00039561505844430065
-[Epoch   1/100] recon+kld=0.358398
-[Epoch   2/100] recon+kld=0.130777
-[Epoch   3/100] recon+kld=0.126476
-[Epoch   4/100] recon+kld=0.125687
-[Epoch   5/100] recon+kld=0.125354
-[Epoch   6/100] recon+kld=0.125093
-[Epoch   7/100] recon+kld=0.124608
-[Epoch   8/100] recon+kld=0.124451
-[Epoch   9/100] recon+kld=0.124384
-[Epoch  10/100] recon+kld=0.124344
-[Epoch  11/100] recon+kld=0.124314
-[Epoch  12/100] recon+kld=0.124286
-[Epoch  13/100] recon+kld=0.124267
-[Epoch  14/100] recon+kld=0.124255
-[Epoch  15/100] recon+kld=0.124242
-[Epoch  16/100] recon+kld=0.124227
-[Epoch  17/100] recon+kld=0.124218
-[Epoch  18/100] recon+kld=0.124214
-[Epoch  19/100] recon+kld=0.124202
-[Epoch  20/100] recon+kld=0.124198
-[Epoch  21/100] recon+kld=0.124194
-[Epoch  22/100] recon+kld=0.124181
-[Epoch  23/100] recon+kld=0.124189
-[Epoch  24/100] recon+kld=0.124167
-[Epoch  25/100] recon+kld=0.124173
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 772068/1094700
-[DEBUG] DO join | sem zona: 396306/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                       [I 2025-08-04 17:22:33,784] Trial 13 finished with value: 0.1335827063655723 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 5, 'epochs': 100, 'batch_size': 256, 'lr': 0.00039561505844430065}. Best is trial 8 with value: 0.11346452609223227.
-Best trial: 8. Best value: 0.113465:  43%|####3     | 13/30 [1:11:57<49:14, 173.79s/it]Best trial: 8. Best value: 0.113465:  43%|####3     | 13/30 [1:11:57<49:14, 173.79s/it]Best trial: 8. Best value: 0.113465:  47%|####6     | 14/30 [1:11:57<1:11:51, 269.47s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=3 | epochs=100 | batch_size=1024 | lr=0.00035080155674287866
-[Epoch   1/100] recon+kld=0.679370
-                                                                                         [I 2025-08-04 17:22:42,322] Trial 14 pruned. 
-Best trial: 8. Best value: 0.113465:  47%|####6     | 14/30 [1:12:05<1:11:51, 269.47s/it]Best trial: 8. Best value: 0.113465:  47%|####6     | 14/30 [1:12:05<1:11:51, 269.47s/it]Best trial: 8. Best value: 0.113465:  50%|#####     | 15/30 [1:12:05<47:42, 190.82s/it]  # DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=5 | epochs=100 | batch_size=512 | lr=0.0001348389819499669
-[Epoch   1/100] recon+kld=0.839433
-                                                                                       [I 2025-08-04 17:22:56,106] Trial 15 pruned. 
-Best trial: 8. Best value: 0.113465:  50%|#####     | 15/30 [1:12:19<47:42, 190.82s/it]Best trial: 8. Best value: 0.113465:  50%|#####     | 15/30 [1:12:19<47:42, 190.82s/it]Best trial: 8. Best value: 0.113465:  53%|#####3    | 16/30 [1:12:19<32:05, 137.53s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=3 | epochs=100 | batch_size=256 | lr=0.00023931263221496074
-[Epoch   1/100] recon+kld=0.521145
-                                                                                       [I 2025-08-04 17:23:14,517] Trial 16 pruned. 
-Best trial: 8. Best value: 0.113465:  53%|#####3    | 16/30 [1:12:37<32:05, 137.53s/it]Best trial: 8. Best value: 0.113465:  53%|#####3    | 16/30 [1:12:37<32:05, 137.53s/it]Best trial: 8. Best value: 0.113465:  57%|#####6    | 17/30 [1:12:37<22:02, 101.71s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=5 | epochs=200 | batch_size=512 | lr=0.0005222152127211594
-[Epoch   1/200] recon+kld=0.596219
-                                                                                       [I 2025-08-04 17:23:28,280] Trial 17 pruned. 
-Best trial: 8. Best value: 0.113465:  57%|#####6    | 17/30 [1:12:51<22:02, 101.71s/it]Best trial: 8. Best value: 0.113465:  57%|#####6    | 17/30 [1:12:51<22:02, 101.71s/it]Best trial: 8. Best value: 0.113465:  60%|######    | 18/30 [1:12:51<15:03, 75.28s/it] # DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=3 | epochs=150 | batch_size=256 | lr=0.0012634251864772873
-[Epoch   1/150] recon+kld=0.324241
-[Epoch   2/150] recon+kld=0.216499
-[Epoch   3/150] recon+kld=0.215314
-[Epoch   4/150] recon+kld=0.214413
-[Epoch   5/150] recon+kld=0.214125
-[Epoch   6/150] recon+kld=0.214009
-[Epoch   7/150] recon+kld=0.213919
-                                                                                      [I 2025-08-04 17:25:37,949] Trial 18 pruned. 
-Best trial: 8. Best value: 0.113465:  60%|######    | 18/30 [1:15:01<15:03, 75.28s/it]Best trial: 8. Best value: 0.113465:  60%|######    | 18/30 [1:15:01<15:03, 75.28s/it]Best trial: 8. Best value: 0.113465:  63%|######3   | 19/30 [1:15:01<16:47, 91.62s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=5 | epochs=100 | batch_size=1024 | lr=0.0005862940643869035
-[Epoch   1/100] recon+kld=0.609765
-                                                                                      [I 2025-08-04 17:25:48,760] Trial 19 pruned. 
-Best trial: 8. Best value: 0.113465:  63%|######3   | 19/30 [1:15:12<16:47, 91.62s/it]Best trial: 8. Best value: 0.113465:  63%|######3   | 19/30 [1:15:12<16:47, 91.62s/it]Best trial: 8. Best value: 0.113465:  67%|######6   | 20/30 [1:15:12<11:13, 67.36s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=4 | epochs=200 | batch_size=256 | lr=0.00021156972940896513
-[Epoch   1/200] recon+kld=0.588450
-                                                                                      [I 2025-08-04 17:26:07,021] Trial 20 pruned. 
-Best trial: 8. Best value: 0.113465:  67%|######6   | 20/30 [1:15:30<11:13, 67.36s/it]Best trial: 8. Best value: 0.113465:  67%|######6   | 20/30 [1:15:30<11:13, 67.36s/it]Best trial: 8. Best value: 0.113465:  70%|#######   | 21/30 [1:15:30<07:53, 52.62s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=6 | epochs=150 | batch_size=256 | lr=0.0011151153306999105
-[Epoch   1/150] recon+kld=0.209769
-[Epoch   2/150] recon+kld=0.125561
-[Epoch   3/150] recon+kld=0.124298
-[Epoch   4/150] recon+kld=0.124033
-[Epoch   5/150] recon+kld=0.123912
-[Epoch   6/150] recon+kld=0.123852
-[Epoch   7/150] recon+kld=0.123815
-[Epoch   8/150] recon+kld=0.123793
-[Epoch   9/150] recon+kld=0.123780
-[Epoch  10/150] recon+kld=0.123775
-[Epoch  11/150] recon+kld=0.123756
-[Epoch  12/150] recon+kld=0.123750
-[Epoch  13/150] recon+kld=0.123722
-[Epoch  14/150] recon+kld=0.123718
-[Epoch  15/150] recon+kld=0.123708
-[Epoch  16/150] recon+kld=0.123701
-[Epoch  17/150] recon+kld=0.123699
-[Epoch  18/150] recon+kld=0.123691
-[Epoch  19/150] recon+kld=0.123690
-[Epoch  20/150] recon+kld=0.123666
-[Epoch  21/150] recon+kld=0.123667
-[Epoch  22/150] recon+kld=0.123656
-[Epoch  23/150] recon+kld=0.123641
-[Epoch  24/150] recon+kld=0.123640
-[Epoch  25/150] recon+kld=0.123644
-[Epoch  26/150] recon+kld=0.123623
-[Epoch  27/150] recon+kld=0.123631
-[Epoch  28/150] recon+kld=0.123617
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 411392/1094700
-[DEBUG] DO join | sem zona: 530097/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                      [I 2025-08-04 17:35:11,998] Trial 21 finished with value: 0.09745325279964874 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 6, 'epochs': 150, 'batch_size': 256, 'lr': 0.0011151153306999105}. Best is trial 21 with value: 0.09745325279964874.
-Best trial: 8. Best value: 0.113465:  70%|#######   | 21/30 [1:24:35<07:53, 52.62s/it]Best trial: 21. Best value: 0.0974533:  70%|#######   | 21/30 [1:24:35<07:53, 52.62s/it]Best trial: 21. Best value: 0.0974533:  73%|#######3  | 22/30 [1:24:35<26:43, 200.38s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=6 | epochs=150 | batch_size=256 | lr=0.0008943385290592468
-[Epoch   1/150] recon+kld=0.332969
-[Epoch   2/150] recon+kld=0.126961
-[Epoch   3/150] recon+kld=0.124887
-[Epoch   4/150] recon+kld=0.124121
-[Epoch   5/150] recon+kld=0.123945
-[Epoch   6/150] recon+kld=0.123867
-[Epoch   7/150] recon+kld=0.123814
-[Epoch   8/150] recon+kld=0.123788
-[Epoch   9/150] recon+kld=0.123772
-[Epoch  10/150] recon+kld=0.123750
-[Epoch  11/150] recon+kld=0.123749
-[Epoch  12/150] recon+kld=0.123736
-[Epoch  13/150] recon+kld=0.123718
-[Epoch  14/150] recon+kld=0.123709
-[Epoch  15/150] recon+kld=0.123705
-[Epoch  16/150] recon+kld=0.123696
-[Epoch  17/150] recon+kld=0.123685
-[Epoch  18/150] recon+kld=0.123676
-[Epoch  19/150] recon+kld=0.123671
-[Epoch  20/150] recon+kld=0.123665
-[Epoch  21/150] recon+kld=0.123655
-[Epoch  22/150] recon+kld=0.123661
-[Epoch  23/150] recon+kld=0.123643
-[Epoch  24/150] recon+kld=0.123641
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 583589/1094700
-[DEBUG] DO join | sem zona: 252240/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                         [I 2025-08-04 17:43:04,325] Trial 22 finished with value: 0.12171765107183892 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 6, 'epochs': 150, 'batch_size': 256, 'lr': 0.0008943385290592468}. Best is trial 21 with value: 0.09745325279964874.
-Best trial: 21. Best value: 0.0974533:  73%|#######3  | 22/30 [1:32:27<26:43, 200.38s/it]Best trial: 21. Best value: 0.0974533:  73%|#######3  | 22/30 [1:32:27<26:43, 200.38s/it]Best trial: 21. Best value: 0.0974533:  77%|#######6  | 23/30 [1:32:27<32:53, 281.99s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=6 | epochs=150 | batch_size=256 | lr=0.0034800360105607256
-[Epoch   1/150] recon+kld=0.187012
-[Epoch   2/150] recon+kld=0.125114
-[Epoch   3/150] recon+kld=0.124421
-[Epoch   4/150] recon+kld=0.124101
-[Epoch   5/150] recon+kld=0.124030
-[Epoch   6/150] recon+kld=0.123978
-[Epoch   7/150] recon+kld=0.123942
-[Epoch   8/150] recon+kld=0.123921
-[Epoch   9/150] recon+kld=0.123866
-[Epoch  10/150] recon+kld=0.123850
-[Epoch  11/150] recon+kld=0.123814
-[Epoch  12/150] recon+kld=0.123779
-[Epoch  13/150] recon+kld=0.123773
-[Epoch  14/150] recon+kld=0.123764
-[Epoch  15/150] recon+kld=0.123751
-[Epoch  16/150] recon+kld=0.123741
-[Epoch  17/150] recon+kld=0.123708
-[Epoch  18/150] recon+kld=0.123715
-[Epoch  19/150] recon+kld=0.123715
-[Epoch  20/150] recon+kld=0.123719
-[Epoch  21/150] recon+kld=0.123678
-[Epoch  22/150] recon+kld=0.123689
-[Epoch  23/150] recon+kld=0.123674
-[Epoch  24/150] recon+kld=0.123680
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 420190/1094700
-[DEBUG] DO join | sem zona: 365629/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                         [I 2025-08-04 17:54:21,559] Trial 23 finished with value: 0.1333394689919568 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 6, 'epochs': 150, 'batch_size': 256, 'lr': 0.0034800360105607256}. Best is trial 21 with value: 0.09745325279964874.
-Best trial: 21. Best value: 0.0974533:  77%|#######6  | 23/30 [1:43:44<32:53, 281.99s/it]Best trial: 21. Best value: 0.0974533:  77%|#######6  | 23/30 [1:43:44<32:53, 281.99s/it]Best trial: 21. Best value: 0.0974533:  80%|########  | 24/30 [1:43:44<40:03, 400.59s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=6 | epochs=200 | batch_size=256 | lr=0.0015315941876356733
-[Epoch   1/200] recon+kld=0.203929
-[Epoch   2/200] recon+kld=0.125366
-[Epoch   3/200] recon+kld=0.124810
-[Epoch   4/200] recon+kld=0.124629
-[Epoch   5/200] recon+kld=0.124437
-[Epoch   6/200] recon+kld=0.124019
-[Epoch   7/200] recon+kld=0.123934
-[Epoch   8/200] recon+kld=0.123923
-[Epoch   9/200] recon+kld=0.123876
-[Epoch  10/200] recon+kld=0.123871
-[Epoch  11/200] recon+kld=0.123852
-[Epoch  12/200] recon+kld=0.123813
-[Epoch  13/200] recon+kld=0.123792
-[Epoch  14/200] recon+kld=0.123780
-[Epoch  15/200] recon+kld=0.123765
-[Epoch  16/200] recon+kld=0.123732
-[Epoch  17/200] recon+kld=0.123709
-[Epoch  18/200] recon+kld=0.123692
-[Epoch  19/200] recon+kld=0.123668
-[Epoch  20/200] recon+kld=0.123653
-[Epoch  21/200] recon+kld=0.123640
-[Epoch  22/200] recon+kld=0.123637
-[Epoch  23/200] recon+kld=0.123611
-[Epoch  24/200] recon+kld=0.123604
-[Epoch  25/200] recon+kld=0.123590
-[Epoch  26/200] recon+kld=0.123598
-[Epoch  27/200] recon+kld=0.123600
-[Epoch  28/200] recon+kld=0.123593
-[Epoch  29/200] recon+kld=0.123590
-[Epoch  30/200] recon+kld=0.123585
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cuda…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 402351/1094700
-[DEBUG] DO join | sem zona: 484042/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-                                                                                         [I 2025-08-04 18:16:58,705] Trial 24 finished with value: 0.15345939761999616 and parameters: {'n_layers': 1, 'units_l1': 4, 'latent_dim': 6, 'epochs': 200, 'batch_size': 256, 'lr': 0.0015315941876356733}. Best is trial 21 with value: 0.09745325279964874.
-Best trial: 21. Best value: 0.0974533:  80%|########  | 24/30 [2:06:21<40:03, 400.59s/it]Best trial: 21. Best value: 0.0974533:  80%|########  | 24/30 [2:06:21<40:03, 400.59s/it]Best trial: 21. Best value: 0.0974533:  83%|########3 | 25/30 [2:06:21<57:17, 687.59s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=6 | epochs=150 | batch_size=512 | lr=0.0008715839684169599
-[Epoch   1/150] recon+kld=0.808466
-                                                                                         [I 2025-08-04 18:17:29,532] Trial 25 pruned. 
-Best trial: 21. Best value: 0.0974533:  83%|########3 | 25/30 [2:06:52<57:17, 687.59s/it]Best trial: 21. Best value: 0.0974533:  83%|########3 | 25/30 [2:06:52<57:17, 687.59s/it]Best trial: 21. Best value: 0.0974533:  87%|########6 | 26/30 [2:06:52<32:42, 490.54s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=6 | epochs=150 | batch_size=256 | lr=0.0005724824098768911
-[Epoch   1/150] recon+kld=0.466559
-                                                                                         [I 2025-08-04 18:18:14,999] Trial 26 pruned. 
-Best trial: 21. Best value: 0.0974533:  87%|########6 | 26/30 [2:07:38<32:42, 490.54s/it]Best trial: 21. Best value: 0.0974533:  87%|########6 | 26/30 [2:07:38<32:42, 490.54s/it]Best trial: 21. Best value: 0.0974533:  90%|######### | 27/30 [2:07:38<17:51, 357.01s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=5 | epochs=200 | batch_size=256 | lr=0.002206006732905601
-[Epoch   1/200] recon+kld=0.235891
-[Epoch   2/200] recon+kld=0.125419
-[Epoch   3/200] recon+kld=0.124928
-[Epoch   4/200] recon+kld=0.124700
-[Epoch   5/200] recon+kld=0.124610
-[Epoch   6/200] recon+kld=0.124537
-[Epoch   7/200] recon+kld=0.124465
-                                                                                         [I 2025-08-04 18:23:22,565] Trial 27 pruned. 
-Best trial: 21. Best value: 0.0974533:  90%|######### | 27/30 [2:12:45<17:51, 357.01s/it]Best trial: 21. Best value: 0.0974533:  90%|######### | 27/30 [2:12:45<17:51, 357.01s/it]Best trial: 21. Best value: 0.0974533:  93%|#########3| 28/30 [2:12:45<11:24, 342.18s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4, 2) | latent_dim=6 | epochs=150 | batch_size=1024 | lr=0.0010507105282449563
-[Epoch   1/150] recon+kld=0.571120
-                                                                                         [I 2025-08-04 18:23:49,370] Trial 28 pruned. 
-Best trial: 21. Best value: 0.0974533:  93%|#########3| 28/30 [2:13:12<11:24, 342.18s/it]Best trial: 21. Best value: 0.0974533:  93%|#########3| 28/30 [2:13:12<11:24, 342.18s/it]Best trial: 21. Best value: 0.0974533:  97%|#########6| 29/30 [2:13:12<04:07, 247.56s/it]# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(2,) | latent_dim=6 | epochs=200 | batch_size=512 | lr=0.0019629367966967357
-[Epoch   1/200] recon+kld=0.392243
-                                                                                         [I 2025-08-04 18:24:21,199] Trial 29 pruned. 
-Best trial: 21. Best value: 0.0974533:  97%|#########6| 29/30 [2:13:44<04:07, 247.56s/it]Best trial: 21. Best value: 0.0974533:  97%|#########6| 29/30 [2:13:44<04:07, 247.56s/it]Best trial: 21. Best value: 0.0974533: 100%|##########| 30/30 [2:13:44<00:00, 182.84s/it]Best trial: 21. Best value: 0.0974533: 100%|##########| 30/30 [2:13:44<00:00, 267.48s/it]
-# DEBUG: Iniciando treino VAE em cuda | hidden_dims=(4,) | latent_dim=6 | epochs=150 | batch_size=256 | lr=0.0011151153306999105
-[Epoch   1/150] recon+kld=0.211989
-[Epoch   2/150] recon+kld=0.125744
-[Epoch   3/150] recon+kld=0.124527
-[Epoch   4/150] recon+kld=0.124142
-[Epoch   5/150] recon+kld=0.124022
-[Epoch   6/150] recon+kld=0.123944
-[Epoch   7/150] recon+kld=0.123898
-[Epoch   8/150] recon+kld=0.123870
-[Epoch   9/150] recon+kld=0.123830
-[Epoch  10/150] recon+kld=0.123811
-[Epoch  11/150] recon+kld=0.123791
-[Epoch  12/150] recon+kld=0.123778
-[Epoch  13/150] recon+kld=0.123755
-[Epoch  14/150] recon+kld=0.123742
-[Epoch  15/150] recon+kld=0.123734
-[Epoch  16/150] recon+kld=0.123719
-[Epoch  17/150] recon+kld=0.123716
-[Epoch  18/150] recon+kld=0.123691
-[Epoch  19/150] recon+kld=0.123683
-[Epoch  20/150] recon+kld=0.123668
-[Epoch  21/150] recon+kld=0.123658
-[Epoch  22/150] recon+kld=0.123655
-[Epoch  23/150] recon+kld=0.123641
-[Epoch  24/150] recon+kld=0.123623
-[Epoch  25/150] recon+kld=0.123623
-[Epoch  26/150] recon+kld=0.123617
-[Epoch  27/150] recon+kld=0.123607
-[Epoch  28/150] recon+kld=0.123599
-# DEBUG: Early stopping disparado – sem melhora por 10 épocas.
-
-# DEBUG: Treino VAE finalizado
-
-# DEBUG: Amostrando 1,094,700 pontos (batch=100000) no cpu…
-    · chunk 100,000/1,094,700 pronto
-    · chunk 200,000/1,094,700 pronto
-    · chunk 300,000/1,094,700 pronto
-    · chunk 400,000/1,094,700 pronto
-    · chunk 500,000/1,094,700 pronto
-    · chunk 600,000/1,094,700 pronto
-    · chunk 700,000/1,094,700 pronto
-    · chunk 800,000/1,094,700 pronto
-    · chunk 900,000/1,094,700 pronto
-    · chunk 1,000,000/1,094,700 pronto
-    · chunk 1,094,700/1,094,700 pronto
-# DEBUG: Amostragem concluída
-[DEBUG] assign_zone_names | linhas de entrada: 1094700
-[DEBUG] _load_zones | loaded 263 polygons | CRS original: EPSG:2263
-[DEBUG] _load_zones | renomeou colunas {'LocationID': 'zone_id', 'zone': 'zone_name'}
-[DEBUG] _load_zones | reprojetado para EPSG:4326
-[DEBUG] PU join | sem zona: 492651/1094700
-[DEBUG] DO join | sem zona: 627542/1094700
-[DEBUG] assign_zone_names | linhas de saída: 1094700
-
-Métrica OD final: 0.12868228528898187
-Dados sintéticos salvos em /home-ext/caioloss/Dados/viagens_synth_vae_od.parquet

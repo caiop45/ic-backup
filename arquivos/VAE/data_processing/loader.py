@@ -13,14 +13,25 @@ def load_real_data():
     """
     df = pd.read_parquet(REAL_DATA_PATH)
     df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
-  
+
     # 2024-01/02 | seg-qua
     df = df[
         (df["tpep_pickup_datetime"].dt.year == 2024) &
-        (df["tpep_pickup_datetime"].dt.month.isin([1])) &
-        (df["tpep_pickup_datetime"].dt.dayofweek.between(0, 3))
+        (df["tpep_pickup_datetime"].dt.month.isin([4,5])) &
+        (df["tpep_pickup_datetime"].dt.dayofweek.between(0, 5))
     ]
+    mes_counts = (
+    df["tpep_pickup_datetime"]
+      .dt.to_period("M")
+      .value_counts()
+      .sort_index()
+      .reindex(pd.period_range("2024-01", "2024-12", freq="M"), fill_value=0)
+    )
 
+    print("\n# Linhas por mês (2024)")
+    for mes, n in mes_counts.items():
+        print(f"{mes}: {n}")
+   # print(df.head())
     df["hour_of_day"] = df["tpep_pickup_datetime"].dt.hour
     df["trip_count"] = 1
 

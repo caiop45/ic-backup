@@ -1,0 +1,31 @@
+2025-09-24 08:45:18 | WARNING  | Cannot detect or read from CBR archives
+2025-09-24 08:45:18 | INFO     | Starting Codex v1.8.14
+2025-09-24 08:45:18 | INFO     | Ensuring database is correct and up to date...
+2025-09-24 08:45:35 | SUCCESS  | Database ready.
+2025-09-24 08:45:35 | SUCCESS  | Created admin user.
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Auto Update = False
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Banner Text = True
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Folder View = True
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Import Metadata = True
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Lazy Import Metadata = True
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Non Users = True
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Registration = True
+2025-09-24 08:45:35 | INFO     | Created AdminFlag: Send Telemetry = True
+2025-09-24 08:45:35 | INFO     | Created Custom Covers Dir settings in the db.
+2025-09-24 08:45:35 | INFO     | root_path: 
+2025-09-24 08:45:35 | SUCCESS  | Running Codex v1.8.14
+2025-09-24 08:45:35 | SUCCESS  | BroadcastListener started.
+2025-09-24 08:45:36 | INFO     | LibrarianDaemon started all threads.
+2025-09-24 08:45:36 | SUCCESS  | LibrarianDaemon ready for tasks.
+2025-09-24 08:45:36 | INFO     | Started watching library /home/caioloss/arquivos/config/custom-covers with poll
+2025-09-24 08:45:36 | INFO     | Library /home/caioloss/arquivos/config/custom-covers waiting for manual poll.
+2025-09-24 08:45:36 | INFO     | Looking for search entries to update since the fracturing of the multiverse...
+2025-09-24 08:45:36 | INFO     | Looking for missing search entries to create...
+2025-09-24 08:45:36 | SUCCESS  | Search index found to be already synced in a moment.
+2025-09-24 08:45:50 | INFO     | Saved new latest codex version 1.8.14.
+2025-09-24 08:45:50 | INFO     | Checked Codex latest version in a moment.
+2025-09-24 08:46:26 | INFO     | Asking hypercorn to shut down gracefully. Could take 10 seconds...
+2025-09-24 08:46:26 | INFO     | BroadcastListener shutdown
+2025-09-24 08:46:26 | INFO     | LibrarianDaemon joined all threads.
+2025-09-24 08:46:26 | SUCCESS  | LibrarianDaemon finished.
+2025-09-24 08:46:26 | SUCCESS  | Goodbye.

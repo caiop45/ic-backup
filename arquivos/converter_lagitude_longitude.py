@@ -16,12 +16,26 @@ tempo_inicio_total = time.time()
 # ===============================
 tempo_inicio = time.time()
 parquet_files = [
-    '/home-ext/caioloss/Dados/yellow_tripdata_2024-01.parquet'
+    '/home-ext/caioloss/Dados/yellow_tripdata_2024-04.parquet',
+    '/home-ext/caioloss/Dados/yellow_tripdata_2024-05.parquet'
     # Dá pra adicionar a viagem do resto dos meses aqui
 ]
 df = pd.concat([pd.read_parquet(file) for file in parquet_files], ignore_index=True)
 df = df[['tpep_pickup_datetime', 'PULocationID', 'DOLocationID']]
 print(f"[1] Tempo de leitura dos dados de viagens: {time.time() - tempo_inicio:.2f} segundos")
+
+df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
+mes_counts = (
+    df["tpep_pickup_datetime"]
+      .dt.to_period("M")
+      .value_counts()
+      .sort_index()
+      .reindex(pd.period_range("2024-01", "2024-12", freq="M"), fill_value=0)
+    )
+
+print("\n# Linhas por mês (2024)")
+for mes, n in mes_counts.items():
+    print(f"{mes}: {n}")
 
 # =================================
 # 2. Leitura dos dados de taxi-zones
