@@ -20,8 +20,8 @@ FILTER_END_DATE = None
 # Split fractions (70% treino, 30% teste)
 # Com TRAIN_FRAC + VAL_FRAC = 1.0, o hold_df fica vazio e val_df é usado como teste
 # O modelo usa val_df tanto para early stopping quanto para avaliação final
-TRAIN_FRAC = 0.70
-VAL_FRAC = 0.15; TRAIN_FRAC = 0.35
+TRAIN_FRAC = 0.35
+VAL_FRAC = 0.15
 
 # Model hyperparameters
 ENCODER_HIDDEN_DIMS = (256, 128)
@@ -76,14 +76,61 @@ COVERAGE_SPACE_WEIGHT = 1.0
 GLOBAL_SEED = 42
 NUM_WORKERS = 0
 
+# Strategy A (hierarchical time + conditionals + alternative splits)
+SA_TIME_BINS_H = 24
+SA_MIN_R_EPS = 1e-6
+SA_SPLIT_STRATEGY = "S1"  # "S1" (weekly chronological) or "S2" (by day)
+SA_TRAIN_FRAC = 0.70
+SA_VAL_FRAC = 0.15
+SA_SPLIT_SEED = GLOBAL_SEED
+SA_USE_WEEKEND = False
+SA_USE_MONTH = False
+SA_STRATEGY_A_COLUMNS = [
+    "hora_do_dia",
+    "r",
+    "pickup_id",
+    "dropoff_id",
+    "dia_da_semana",
+]
+SA_FILTER_YEAR = FILTER_YEAR
+SA_FILTER_MONTHS = FILTER_MONTHS
+SA_FILTER_DOW_MIN = FILTER_DOW_MIN
+SA_FILTER_DOW_MAX = FILTER_DOW_MAX
+SA_FILTER_START_DATE = FILTER_START_DATE
+SA_FILTER_END_DATE = FILTER_END_DATE
+SA_NODE2VEC_DIM = 64
+SA_NODE2VEC_WALKS_PER_NODE = 10
+SA_NODE2VEC_WALK_LENGTH = 80
+SA_NODE2VEC_WINDOW = 10
+SA_NODE2VEC_P = 1.0
+SA_NODE2VEC_Q = 1.0
+SA_GFUNC_TOPK = 100
+SA_PHYS_EDGES_CSV = None
+SA_MODEL_DROPOUT = 0.1
+SA_MODEL_HIDDEN = 256
+SA_MODEL_LAYERS = 3
+SA_COND_EMB_DIM = 16
+SA_TIME_EMB_DIM = 16
+SA_ORIGIN_EMB_DIM = 32
+SA_DEST_HEAD_TYPE = "embedding_softmax"
+SA_SAMPLE_TEMPERATURE = 1.0
+SA_RESIDUAL_NUM_LAYERS = 5
+SA_RESIDUAL_NUM_BINS = 8
+SA_RESIDUAL_CONTEXT_HIDDEN = 256
+SA_RESIDUAL_EPS = SA_MIN_R_EPS
+SA_RESIDUAL_MIN_BIN_WIDTH = 1e-3
+SA_RESIDUAL_MIN_BIN_HEIGHT = 1e-3
+SA_RESIDUAL_MIN_DERIV = 1e-3
+
 # Output dirs (all analyses/csvs under /home-ext/caioloss/Dados)
 OUTPUT_BASE_DIR = Path("outputs")
 SAVE_DATA_SUBDIR = "ryc"
 SAVE_DATA_DIR = str(OUTPUT_BASE_DIR / "save_data" / SAVE_DATA_SUBDIR)
 LOG_DIR = str(OUTPUT_BASE_DIR / "logs")
 PLOT_DIR = str(OUTPUT_BASE_DIR / "graficos")
+SA_TOPOLOGY_CACHE_DIR = str(OUTPUT_BASE_DIR / "topology_cache")
 
-for _d in (SAVE_DATA_DIR, LOG_DIR, PLOT_DIR):
+for _d in (SAVE_DATA_DIR, LOG_DIR, PLOT_DIR, SA_TOPOLOGY_CACHE_DIR):
     os.makedirs(_d, exist_ok=True)
 
 # Experiment overrides (train only order_1 with different params)

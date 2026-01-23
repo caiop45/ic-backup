@@ -6,6 +6,10 @@ from typing import Any, Dict, Tuple
 
 import torch
 
+from data_processing.strategy_a_transformer import (
+    StrategyATransformer,
+    StrategyATransformerState,
+)
 from data_processing.transformer import CategoricalTransformer, TransformerState
 
 
@@ -27,6 +31,45 @@ def load_mappings(path: str | Path) -> CategoricalTransformer:
     categories = payload["categories"]
     transformer = CategoricalTransformer(columns)
     transformer.load_state_dict(TransformerState(columns=columns, categories=categories))
+    return transformer
+
+
+def save_strategy_a_mappings(
+    path: str | Path, transformer: StrategyATransformer
+) -> None:
+    state = transformer.state_dict()
+    payload = {
+        "zone_categories": state.zone_categories,
+        "time_categories": state.time_categories,
+        "conditional_categories": state.conditional_categories,
+        "conditional_columns": state.conditional_columns,
+        "min_r_eps": state.min_r_eps,
+        "use_weekend": state.use_weekend,
+        "use_month": state.use_month,
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+def load_strategy_a_mappings(path: str | Path) -> StrategyATransformer:
+    path = Path(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    state = StrategyATransformerState(
+        zone_categories=payload["zone_categories"],
+        time_categories=payload["time_categories"],
+        conditional_categories=payload["conditional_categories"],
+        conditional_columns=payload["conditional_columns"],
+        min_r_eps=payload["min_r_eps"],
+        use_weekend=payload["use_weekend"],
+        use_month=payload["use_month"],
+    )
+    transformer = StrategyATransformer(
+        min_r_eps=state.min_r_eps,
+        use_weekend=state.use_weekend,
+        use_month=state.use_month,
+    )
+    transformer.load_state_dict(state)
     return transformer
 
 
