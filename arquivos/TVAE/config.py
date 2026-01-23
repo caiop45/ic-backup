@@ -17,10 +17,10 @@ FILTER_DOW_MAX = 5
 FILTER_START_DATE = None
 FILTER_END_DATE = None
 
-# Split fractions (70% treino, 30% teste)
+# Split fractions (70% treino, 15% validação, 15% hold)
 # Com TRAIN_FRAC + VAL_FRAC = 1.0, o hold_df fica vazio e val_df é usado como teste
 # O modelo usa val_df tanto para early stopping quanto para avaliação final
-TRAIN_FRAC = 0.35
+TRAIN_FRAC = 0.70
 VAL_FRAC = 0.15
 
 # Model hyperparameters
@@ -78,6 +78,11 @@ NUM_WORKERS = 0
 
 # Strategy A (hierarchical time + conditionals + alternative splits)
 SA_TIME_BINS_H = 24
+SA_EPOCHS = 30
+SA_BATCH_SIZE = 1024
+SA_LR = 1e-3
+SA_WEIGHT_DECAY = 0.0
+SA_EVAL_SAMPLE_RATIO = 1.0
 SA_MIN_R_EPS = 1e-6
 SA_SPLIT_STRATEGY = "S1"  # "S1" (weekly chronological) or "S2" (by day)
 SA_TRAIN_FRAC = 0.70
@@ -114,6 +119,8 @@ SA_TIME_EMB_DIM = 16
 SA_ORIGIN_EMB_DIM = 32
 SA_DEST_HEAD_TYPE = "embedding_softmax"
 SA_SAMPLE_TEMPERATURE = 1.0
+SA_DESTINATION_HEAD_TYPE = SA_DEST_HEAD_TYPE
+SA_TEMPERATURE = SA_SAMPLE_TEMPERATURE
 SA_RESIDUAL_NUM_LAYERS = 5
 SA_RESIDUAL_NUM_BINS = 8
 SA_RESIDUAL_CONTEXT_HIDDEN = 256

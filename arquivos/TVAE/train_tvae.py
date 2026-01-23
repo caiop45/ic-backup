@@ -17,23 +17,9 @@ import config
 from data_processing.loader import load_and_split
 from data_processing.transformer import CategoricalTransformer
 from models.tvae_ar import TVAEAutoregressive
+from utils.evaluation import compute_metrics, compute_paper_metrics
 from utils.helpers import set_seed
-from utils.metrics import (
-    chi2_counts,
-    coverage_score,
-    graph_similarity_score,
-    joint_counts,
-    joint_metrics,
-    jsd_counts,
-    marginal_counts,
-    od_metrics,
-    plot_marginal_hist,
-    plot_topk,
-    save_metrics_json,
-    time_metrics,
-    topk_table,
-    wasserstein_time,
-)
+from utils.metrics import joint_counts, save_metrics_json
 from utils.serialization import save_checkpoint, save_mappings
 
 #Debug prints
@@ -293,107 +279,6 @@ def _eval_sample_size(df: pd.DataFrame) -> int:
 #OD: od_jsd, od_coverage	Pares pickup-dropoff
 #Temporal: time_jsd, time_coverage	Combinações dia-hora
 #Joint: joint_jsd, mode_dropping	OD × dia × hora completo
-def _compute_metrics(
-    real_df: pd.DataFrame,
-    synth_df: pd.DataFrame,
-    *,
-    order_key: str,
-    output_dir: Path,
-    plot_dir: Path,
-) -> Dict[str, float]:
-    metrics: Dict[str, float] = {}
-    metrics["n_real"] = float(len(real_df))
-    metrics["n_synth"] = float(len(synth_df))
-
-    for col in config.OUTPUT_COLUMNS:
-        real_counts = marginal_counts(real_df, col)
-        synth_counts = marginal_counts(synth_df, col)
-        metrics[f"{col}_jsd"] = jsd_counts(real_counts, synth_counts)
-        metrics[f"{col}_chi2"] = chi2_counts(real_counts, synth_counts)
-
-        plot_path = plot_dir / f"hist_{order_key}_{col}.png"
-        plot_marginal_hist(real_counts, synth_counts, title=f"{order_key} {col}", path=plot_path)
-
-        if col in ("pickup_id", "dropoff_id"):
-            topk_df = topk_table(real_counts, synth_counts, k=20)
-            topk_path = output_dir / f"topk_{order_key}_{col}.csv"
-            topk_df.to_csv(topk_path, index=False)
-            plot_topk(
-                topk_df,
-                title=f"{order_key} topk {col}",
-                path=plot_dir / f"topk_{order_key}_{col}.png",
-            )
-
-    # Métricas diagnósticas separadas
-    od = od_metrics(real_df, synth_df)
-    metrics.update(od)
-
-    time = time_metrics(real_df, synth_df)
-    metrics.update(time)
-
-    # Métricas da joint completa (OD × dia × hora)
-    joint = joint_metrics(real_df, synth_df)
-    metrics.update(joint)
-    return metrics
-
-#Aqui sim são as métricas do paper!
-def _compute_paper_metrics(
-    train_df: pd.DataFrame, test_df: pd.DataFrame, synth_df: pd.DataFrame
-) -> Dict[str, float]:
-    metrics: Dict[str, float] = {}
-
-    metrics["w1_tr_te"] = wasserstein_time(
-        train_df, test_df, support_size=config.TIME_KEY_CARDINALITY
-    )
-    metrics["w1_tr_syn"] = wasserstein_time(
-        train_df, synth_df, support_size=config.TIME_KEY_CARDINALITY
-    )
-    metrics["w1_te_syn"] = wasserstein_time(
-        test_df, synth_df, support_size=config.TIME_KEY_CARDINALITY
-    )
-
-    metrics["g_tr_te"] = 100.0 * graph_similarity_score(train_df, test_df)
-    metrics["g_tr_syn"] = 100.0 * graph_similarity_score(train_df, synth_df)
-    metrics["g_te_syn"] = 100.0 * graph_similarity_score(test_df, synth_df)
-
-    metrics["cov_tr_te"] = coverage_score(
-        train_df,
-        test_df,
-        k=config.COVERAGE_K,
-        max_samples=config.COVERAGE_MAX_SAMPLES,
-        seed=config.GLOBAL_SEED,
-        chunk_size=config.COVERAGE_CHUNK_SIZE,
-        w_time=config.COVERAGE_TIME_WEIGHT,
-        w_space=config.COVERAGE_SPACE_WEIGHT,
-    )
-    metrics["cov_tr_syn"] = coverage_score(
-        train_df,
-        synth_df,
-        k=config.COVERAGE_K,
-        max_samples=config.COVERAGE_MAX_SAMPLES,
-        seed=config.GLOBAL_SEED,
-        chunk_size=config.COVERAGE_CHUNK_SIZE,
-        w_time=config.COVERAGE_TIME_WEIGHT,
-        w_space=config.COVERAGE_SPACE_WEIGHT,
-    )
-    metrics["cov_te_syn"] = coverage_score(
-        test_df,
-        synth_df,
-        k=config.COVERAGE_K,
-        max_samples=config.COVERAGE_MAX_SAMPLES,
-        seed=config.GLOBAL_SEED,
-        chunk_size=config.COVERAGE_CHUNK_SIZE,
-        w_time=config.COVERAGE_TIME_WEIGHT,
-        w_space=config.COVERAGE_SPACE_WEIGHT,
-    )
-
-    metrics["coverage_k"] = float(config.COVERAGE_K)
-    metrics["coverage_max_samples"] = float(config.COVERAGE_MAX_SAMPLES or 0)
-    metrics["coverage_time_weight"] = float(config.COVERAGE_TIME_WEIGHT)
-    metrics["coverage_space_weight"] = float(config.COVERAGE_SPACE_WEIGHT)
-
-    return metrics
-
 #salva valores unicos de cada coluna em cada split
 def _save_value_counts(df: pd.DataFrame, col: str, path: Path) -> None:
     counts = df[col].value_counts().sort_index()
@@ -476,7 +361,7 @@ def _run_dirs(run_tag: str) -> Tuple[Path, Path, Path]:
 # Salva o modelo localmente, salva os mappings, salva as métricas
 # Depois ele gera os dados sintéticos com _sample_synthetic()
 # Ai calcula as métricas com _computer_metrics()
-# Depois ele finaliza calculando as métricas do paper com _compute_paper_metrics()
+# Depois ele finaliza calculando as métricas do paper com compute_paper_metrics()
 def train_single_order(
     order_key: str,
     order: List[str],
@@ -647,14 +532,14 @@ def train_single_order(
         )
         sample_time_min = (time.monotonic() - sample_start) / 60.0
 
-        metrics = _compute_metrics(
+        metrics = compute_metrics(
             val_df,
             synth_df,
             order_key=order_key,
             output_dir=output_dir,
             plot_dir=plot_dir,
         )
-        paper_metrics = _compute_paper_metrics(train_df, eval_df, synth_df)
+        paper_metrics = compute_paper_metrics(train_df, eval_df, synth_df)
         metrics.update(paper_metrics)
         metrics["best_val"] = best_val
         metrics["train_time_min"] = train_time_min
@@ -681,7 +566,7 @@ def train_all_orders() -> None:
         output_dir, log_dir, plot_dir = _run_dirs(exp_name)
 
         _save_split_stats(raw_train_df, raw_val_df, raw_hold_df, output_dir=output_dir)
-        baseline_metrics = _compute_metrics(
+        baseline_metrics = compute_metrics(
             raw_train_df,
             raw_val_df,
             order_key="train_vs_val",

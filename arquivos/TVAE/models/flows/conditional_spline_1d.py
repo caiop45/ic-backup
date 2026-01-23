@@ -224,7 +224,7 @@ class ConditionalSplineFlow1D(nn.Module):
             raise ValueError("r and context batch sizes must match")
 
         r_clamped = r.clamp(self.eps, 1.0 - self.eps)
-        inside = (r > self.eps) & (r < 1.0 - self.eps)
+        inside = torch.isfinite(r) & (r >= self.eps) & (r <= 1.0 - self.eps)
         _, logabsdet = self.inverse(r_clamped, context)
         log_prob = logabsdet
         log_prob = torch.where(inside, log_prob, torch.full_like(log_prob, float("-inf")))

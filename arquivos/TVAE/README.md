@@ -12,16 +12,24 @@ marginais, espaciais (OD) e espaco-temporais, alem das metricas do paper
 
 - `config.py`: configuracao central (paths, filtros, splits, hiperparametros, pesos).
 - `train_tvae.py`: entrypoint principal de treino e avaliacao.
+- `train_strategy_a.py`: entrypoint de treino e avaliacao do Strategy A.
 - `models/tvae_ar.py`: definicao do modelo TVAE autoregressivo.
+- `models/strategy_a.py`: definicao do modelo Strategy A (factorizacao tempo->origem->destino).
 - `data_processing/loader.py`: leitura do parquet, filtros temporais e split semanal.
+- `data_processing/strategy_a_loader.py`: leitura do parquet, filtros temporais e splits Strategy A.
 - `data_processing/transformer.py`: mapeamento categoria->indice, one-hot e decode.
+- `data_processing/strategy_a_transformer.py`: vocabulario compartilhado + indices Strategy A.
 - `utils/metrics.py`: metricas (JSD, chi2, OD/time/joint, W1, graph similarity, coverage) e plots.
+- `utils/evaluation.py`: metricas compartilhadas (pipeline + paper metrics).
 - `utils/serialization.py`: salvar/carregar checkpoints e mappings.
 - `utils/helpers.py`: seeds e funcoes auxiliares.
 - `sample_tvae.py`: gera amostras sinteticas a partir de um checkpoint.
+- `sample_strategy_a.py`: gera amostras sintéticas do Strategy A condicionadas em u.
 - `analyze_spatial.py`: avaliacao espacial detalhada (OD, graus, condicionais).
 - `recalc_metrics_hold.py`: recalcula metricas usando hold como real.
+- `recalc_metrics_strategy_a_hold.py`: recalcula metricas Strategy A (hold/val).
 - `compare_runs.py`: compara runs, gera plots padronizados e tabela de metricas.
+- `tools/compare_models.py`: compara baseline vs Strategy A em uma tabela unica.
 - `tools/`: scripts utilitarios para inspecao de dependencias e arquivos do pipeline.
 - `graficos/`: plots gerados (pode conter execucoes antigas).
 - `logs/`: logs de treino (pode conter execucoes antigas).
@@ -70,8 +78,8 @@ Arquivos de debug/temporarios nao sao documentados aqui.
    - Decodifica indices para ids reais.
 
 6) **Metricas e artefatos**
-   - `_compute_metrics()` gera JSD/chi2 e metricas OD/time/joint.
-   - `_compute_paper_metrics()` gera W1, graph similarity e coverage.
+   - `utils.evaluation.compute_metrics()` gera JSD/chi2 e metricas OD/time/joint.
+   - `utils.evaluation.compute_paper_metrics()` gera W1, graph similarity e coverage.
    - Salva CSVs, JSONs e graficos no output do run.
 
 ## Arquitetura do modelo (models/tvae_ar.py)
@@ -196,7 +204,7 @@ Pontos-chave:
 - **Split**:
   - `TRAIN_FRAC` e `VAL_FRAC` controlam train/val.
   - O `hold` e o restante (1 - TRAIN_FRAC - VAL_FRAC).
-  - Observacao: `TRAIN_FRAC` e reatribuido no arquivo (0.70 -> 0.35).
+  - Observacao: manter `TRAIN_FRAC + VAL_FRAC <= 1.0` para ter hold.
 - **Hiperparametros**: `LATENT_DIM`, `ENCODER_HIDDEN_DIMS`, `DECODER_HIDDEN_DIMS`,
   `BATCH_SIZE`, `EPOCHS`, `LEARNING_RATE`, `WEIGHT_DECAY`.
 - **Pesos de loss**: `PICKUP_LOSS_WEIGHT`, `DROPOFF_LOSS_WEIGHT`,
@@ -212,3 +220,109 @@ Pontos-chave:
 - O treino usa `val_df` para early stopping.
 - Para metricas finais, `eval_df` e `hold_df` se existir; caso contrario, usa `val_df`.
 - `recalc_metrics_hold.py` padroniza a avaliacao usando hold para todos os runs.
+
+## Strategy A pipeline
+
+### Preparar embeddings de zona
+
+```
+python tools/build_zone_embeddings.py --device cpu
+```
+
+Arquivos esperados em `SA_TOPOLOGY_CACHE_DIR`:
+- `Ecomb.pt` (preferido) ou `Efunc.pt`.
+
+### Treinar Strategy A
+
+```
+python train_strategy_a.py --run-tag strategy_a
+```
+
+Saidas em `SAVE_DATA_DIR/strategy_a`:
+- `strategy_a.pt`
+- `mappings_strategy_a.json`
+- `loss_strategy_a.csv`
+- `metrics_strategy_a.json`
+- `metrics_strategy_a_hold.json` (se hold existir)
+- `synthetic_strategy_a_hold.csv` (se hold existir)
+
+### Amostrar Strategy A (standalone)
+
+```
+python sample_strategy_a.py --run-dir outputs/save_data/strategy_a --split hold
+```
+
+Gera: `synthetic_strategy_a_hold.csv` no diretorio do run.
+
+## Comparison protocol
+
+Objetivo: comparar TVAE baseline vs Strategy A usando as mesmas metricas e splits.
+
+1) **Treinar baseline (TVAE)**:
+
+```
+python train_tvae.py
+```
+
+2) **Recalcular métricas no hold (TVAE)**:
+
+```
+python recalc_metrics_hold.py --run-dir outputs/save_data/baseline
+```
+
+3) **Treinar Strategy A**:
+
+```
+python train_strategy_a.py --run-tag strategy_a
+```
+
+4) **Recalcular métricas Strategy A (hold)**:
+
+```
+python recalc_metrics_strategy_a_hold.py --run-dir outputs/save_data/strategy_a
+```
+
+5) **Comparar tabelas (baseline vs Strategy A)**:
+
+```
+python tools/compare_models.py \
+  --baseline-run outputs/save_data/baseline \
+  --strategy-a-run outputs/save_data/strategy_a \
+  --out-dir outputs/compare_models
+```
+
+## Reproducing paper metrics
+
+As metricas do paper (W1 temporal, graph similarity, coverage) sao sempre geradas por
+`utils.evaluation.compute_paper_metrics()`. Para reproducao consistente:
+
+- Use os mesmos filtros temporais (`FILTER_YEAR`, `FILTER_MONTHS`, `FILTER_DOW_MIN/MAX`).
+- Use o mesmo split base (`TRAIN_FRAC`, `VAL_FRAC`) e estrategia (`SA_SPLIT_STRATEGY`).
+- Fixe `GLOBAL_SEED` quando amostrar/recalcular.
+
+Comandos tipicos:
+
+```
+python train_tvae.py
+python recalc_metrics_hold.py --run-dir outputs/save_data/baseline
+
+python train_strategy_a.py --run-tag strategy_a
+python recalc_metrics_strategy_a_hold.py --run-dir outputs/save_data/strategy_a
+```
+
+## Quick sanity run (<= 2 minutos em CPU)
+
+Para um smoke test rapido, reduza epocas e amostras no `config.py`:
+- `EPOCHS = 1`, `BATCH_SIZE = 256`, `MAX_EVAL_SAMPLES = 1000`
+- `SA_EPOCHS = 1`, `SA_BATCH_SIZE = 256`, `SA_EVAL_SAMPLE_RATIO = 0.1`
+
+Depois rode:
+
+```
+python train_tvae.py
+python train_strategy_a.py --run-tag strategy_a
+python tools/compare_models.py \
+  --baseline-run outputs/save_data/baseline \
+  --strategy-a-run outputs/save_data/strategy_a \
+  --out-dir outputs/compare_models
+```

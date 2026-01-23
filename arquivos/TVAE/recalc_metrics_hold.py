@@ -9,6 +9,7 @@ import torch
 import config
 import train_tvae
 from data_processing.loader import load_and_split
+from utils.evaluation import compute_metrics, compute_paper_metrics
 from utils.metrics import save_metrics_json
 from utils.serialization import build_model_from_checkpoint, load_checkpoint, load_mappings
 
@@ -93,11 +94,13 @@ def main() -> int:
     print(f"[Recalc] sampled {n_eval} rows in {elapsed_min:.2f} min on {device}")
 
     if args.no_plots:
-        train_tvae.plot_marginal_hist = lambda *_, **__: None
-        train_tvae.plot_topk = lambda *_, **__: None
+        import utils.evaluation as eval_mod
+
+        eval_mod.plot_marginal_hist = lambda *_, **__: None
+        eval_mod.plot_topk = lambda *_, **__: None
 
     plot_dir = args.plot_dir or (run_dir / "plots")
-    metrics = train_tvae._compute_metrics(
+    metrics = compute_metrics(
         hold_df,
         synth_df,
         order_key=args.order_key,
@@ -105,7 +108,7 @@ def main() -> int:
         plot_dir=plot_dir,
     )
 
-    paper_metrics = train_tvae._compute_paper_metrics(train_df, hold_df, synth_df)
+    paper_metrics = compute_paper_metrics(train_df, hold_df, synth_df)
     metrics.update(paper_metrics)
     metrics["eval_split"] = "hold"
     metrics["n_real"] = float(len(hold_df))

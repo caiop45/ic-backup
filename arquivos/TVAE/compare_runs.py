@@ -11,6 +11,7 @@ import torch
 import config
 import train_tvae
 from data_processing.loader import load_and_split
+from utils.evaluation import compute_metrics, compute_paper_metrics
 from utils.metrics import marginal_counts, plot_marginal_hist, save_metrics_json
 from utils.serialization import build_model_from_checkpoint, load_checkpoint, load_mappings
 
@@ -136,14 +137,14 @@ def main() -> int:
                 batch_size=args.batch_size,
             )
 
-            metrics = train_tvae._compute_metrics(
+            metrics = compute_metrics(
                 hold_df,
                 synth_df,
                 order_key="order_1",
                 output_dir=run_out,
                 plot_dir=run_out,
             )
-            paper_metrics = train_tvae._compute_paper_metrics(train_df, hold_df, synth_df)
+            paper_metrics = compute_paper_metrics(train_df, hold_df, synth_df)
             metrics.update(paper_metrics)
             metrics["eval_split"] = "hold"
             metrics["n_real"] = float(len(hold_df))
