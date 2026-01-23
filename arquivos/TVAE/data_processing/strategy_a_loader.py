@@ -242,9 +242,12 @@ def split_strategy_a(
     )
 
 
-def load_and_split_strategy_a() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_and_split_strategy_a(
+    split: StrategySplit | None = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     df = load_raw_data_strategy_a()
-    train_df, val_df, hold_df = split_strategy_a(df, config.SA_SPLIT_STRATEGY)
+    strategy = config.SA_SPLIT_STRATEGY if split is None else split
+    train_df, val_df, hold_df = split_strategy_a(df, strategy)
 
     cols = _strategy_a_columns()
     drop_cols = [config.DATETIME_COL]
