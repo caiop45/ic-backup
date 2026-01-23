@@ -1,0 +1,214 @@
+# TVAE
+
+Este diretorio contem o pipeline de treinamento, amostragem e avaliacao de um TVAE
+autoregressivo aplicado a dados de transporte. O modelo trabalha com quatro colunas
+categoricas: `pickup_id`, `dropoff_id`, `dia_da_semana`, `hora_do_dia`.
+
+O objetivo principal e comparar o dado sintetico com o real nas distribuicoes
+marginais, espaciais (OD) e espaco-temporais, alem das metricas do paper
+(W1 temporal, graph similarity e coverage).
+
+## Estrutura do diretorio (top-level)
+
+- `config.py`: configuracao central (paths, filtros, splits, hiperparametros, pesos).
+- `train_tvae.py`: entrypoint principal de treino e avaliacao.
+- `models/tvae_ar.py`: definicao do modelo TVAE autoregressivo.
+- `data_processing/loader.py`: leitura do parquet, filtros temporais e split semanal.
+- `data_processing/transformer.py`: mapeamento categoria->indice, one-hot e decode.
+- `utils/metrics.py`: metricas (JSD, chi2, OD/time/joint, W1, graph similarity, coverage) e plots.
+- `utils/serialization.py`: salvar/carregar checkpoints e mappings.
+- `utils/helpers.py`: seeds e funcoes auxiliares.
+- `sample_tvae.py`: gera amostras sinteticas a partir de um checkpoint.
+- `analyze_spatial.py`: avaliacao espacial detalhada (OD, graus, condicionais).
+- `recalc_metrics_hold.py`: recalcula metricas usando hold como real.
+- `compare_runs.py`: compara runs, gera plots padronizados e tabela de metricas.
+- `tools/`: scripts utilitarios para inspecao de dependencias e arquivos do pipeline.
+- `graficos/`: plots gerados (pode conter execucoes antigas).
+- `logs/`: logs de treino (pode conter execucoes antigas).
+- `save_data/`: artefatos locais (ex.: `tvae_order_1.pt`) e `save_data_ext/` com runs antigos.
+- `comparacao_graficos/`: comparacoes multi-run geradas por `compare_runs.py`.
+- `sample/` e `train/`: pastas vazias (reservadas).
+- `2502.08856v1 (1).pdf`: paper de referencia.
+
+Arquivos de debug/temporarios nao sao documentados aqui.
+
+## Fluxo de dados (end-to-end)
+
+1) **Leitura do dado bruto** (`data_processing/loader.py`)
+   - Le `REAL_DATA_PATH` (parquet).
+   - Converte `DATETIME_COL` para datetime.
+   - Remove linhas sem datetime/pickup/dropoff.
+   - Aplica filtros: ano/mes/dia-da-semana e janela de datas.
+   - Cria colunas derivadas:
+     - `hora_do_dia` = hora do timestamp.
+     - `dia_da_semana` = dayofweek.
+     - `pickup_id` e `dropoff_id` como inteiros.
+
+2) **Split temporal** (`split_dataset_weekly`)
+   - Ordena por datetime.
+   - Agrupa por ISO week.
+   - Usa `TRAIN_FRAC` e `VAL_FRAC` para alocar semanas em train/val.
+   - O restante vai para hold.
+
+3) **Transformacao categorica** (`data_processing/transformer.py`)
+   - `CategoricalTransformer.fit()` ordena categorias observadas no train.
+   - `transform()` mapeia ids reais para indices contiguos.
+   - `one_hot_encode()` cria vetor de entrada do encoder.
+   - `decode_indices()` converte indices para ids reais.
+
+4) **Treino do VAE autoregressivo** (`train_tvae.py`)
+   - `_prepare_dataloaders()` monta `TensorDataset` com:
+     - `x_onehot`: entrada do encoder.
+     - `y_indices`: indices reais por coluna (teacher forcing).
+   - `TVAEAutoregressive` (encoder + decoder por cabecas).
+   - `_epoch_pass()` calcula perdas e faz backprop.
+   - `train_single_order()` executa loop de epocas com early stopping.
+
+5) **Amostragem de sinteticos**
+   - `_sample_synthetic()` gera `z ~ N(0, I)` e amostra sequencialmente:
+     `pickup_id -> dropoff_id -> dia_da_semana -> hora_do_dia`.
+   - Decodifica indices para ids reais.
+
+6) **Metricas e artefatos**
+   - `_compute_metrics()` gera JSD/chi2 e metricas OD/time/joint.
+   - `_compute_paper_metrics()` gera W1, graph similarity e coverage.
+   - Salva CSVs, JSONs e graficos no output do run.
+
+## Arquitetura do modelo (models/tvae_ar.py)
+
+**Encoder**
+- Entrada: vetor one-hot concatenado das 4 colunas.
+- MLP com `ENCODER_HIDDEN_DIMS`.
+- Saidas: `mu` e `logvar` para latente `z`.
+
+**Latente**
+- Reparametrizacao: `z = mu + eps * exp(0.5 * logvar)`.
+
+**Decoder autoregressivo**
+- Uma cabeca MLP por coluna, na ordem definida em `config.ORDERS`.
+- Cada cabeca recebe `z` concatenado com o contexto one-hot das colunas anteriores.
+- Treino: `decode_teacher_forcing()` usa valores reais no contexto.
+- Geracao: `sample()` usa as predicoes do proprio modelo.
+
+## Perdas e regularizadores (train_tvae.py)
+
+**Perda principal**
+- Soma de cross-entropies por coluna (cada cabeca do decoder).
+- Pesos por coluna:
+  - `PICKUP_LOSS_WEIGHT`
+  - `DROPOFF_LOSS_WEIGHT`
+
+**KL do VAE**
+- `kld = -0.5 * mean(1 + logvar - mu^2 - exp(logvar))`
+- Annealing de `beta` via `_kl_beta()` (configura `KL_BETA_START/END`).
+
+**Regularizador KL condicional**
+- `PAIR_KL_WEIGHT`: penaliza divergencia entre
+  `p(dropoff|pickup)` do modelo e do real.
+- `PICKUP_KL_WEIGHT`: penaliza divergencia entre
+  `p(pickup)` do modelo e do real.
+- `PAIR_KL_EPS` e `PICKUP_KL_EPS` controlam suavizacao numerica.
+
+## Metricas calculadas
+
+**Marginais**
+- `*_jsd` e `*_chi2` para cada coluna (`hora_do_dia`, `dia_da_semana`, `pickup_id`, `dropoff_id`).
+- Graficos: `hist_<order_key>_<col>.png`.
+- Top-k: `topk_<order_key>_<col>.csv` + `topk_<order_key>_<col>.png` (apenas pickup/dropoff).
+
+**OD (pickup x dropoff)**
+- `od_jsd`, `od_chi2`, `od_coverage_real`, `od_coverage_synth`,
+  `od_unique_real`, `od_unique_synth`.
+
+**Temporal (dia x hora)**
+- `time_jsd`, `time_chi2`, `time_coverage_real`, `time_coverage_synth`,
+  `time_unique_real`, `time_unique_synth`.
+
+**Joint (OD x dia x hora)**
+- `joint_jsd`, `joint_chi2`, `joint_coverage_real`, `joint_coverage_synth`,
+  `joint_unique_real`, `joint_unique_synth`,
+  `joint_mode_dropping_ratio`, `joint_invalid_ratio`.
+
+**Metricas do paper**
+- W1 temporal: `w1_tr_te`, `w1_tr_syn`, `w1_te_syn`.
+- Graph similarity: `g_tr_te`, `g_tr_syn`, `g_te_syn` (valores * 100).
+- Coverage KNN: `cov_tr_te`, `cov_tr_syn`, `cov_te_syn` (porcentagem).
+
+## Scripts principais (o que fazem)
+
+- `train_tvae.py`
+  - Treina e avalia o TVAE.
+  - Salva checkpoints, mappings, metricas e plots.
+  - Gera baseline train_vs_val (`metrics_train_vs_val.json` e plots).
+
+- `sample_tvae.py`
+  - Amostra sinteticos a partir de um checkpoint e mappings.
+  - Salva CSV com `hora_do_dia`, `dia_da_semana`, `pickup_id`, `dropoff_id`.
+
+- `recalc_metrics_hold.py`
+  - Recalcula metricas usando o hold como real.
+  - Gera `metrics_order_1_hold.json` e plots no diretorio escolhido.
+
+- `analyze_spatial.py`
+  - Analise espacial profunda:
+    - JSD/chi2 para pickup, dropoff e OD.
+    - Cobertura OD e massa invalida/ausente.
+    - Distribuicao de graus (in/out).
+    - Tabelas de top-k (over/under).
+    - JSD condicional para top N origens/destinos.
+  - Salva `spatial_metrics.json` e varios CSVs auxiliares.
+
+- `compare_runs.py`
+  - Padroniza plots e metricas para multiplos runs.
+  - Gera tabela `metrics_table.csv` e `metrics_table.md`.
+  - Inclui referencias do paper em `PAPER_TVAE`.
+
+- `tools/list_pipeline_files.py`
+  - Lista arquivos locais importados a partir de um entrypoint.
+
+- `tools/collect_requirements.py`
+  - Coleta imports externos e pode gerar um requirements basico.
+
+## Artefatos gerados por run
+
+Para cada run (ex.: `baseline`), os principais arquivos salvos sao:
+- Checkpoint: `tvae_order_1.pt`
+- Mappings: `mappings_order_1.json`
+- Perdas: `loss_order_1.csv`
+- Metricas do run: `metrics_order_1.json`
+- Metricas hold (quando recalculado): `metrics_order_1_hold.json`
+- Baseline train_vs_val: `metrics_train_vs_val.json`
+- Estatisticas de split: `split_stats_train.json`, `split_stats_val.json`, `split_stats_hold.json`
+- Contagens por split: `counts_<split>_<col>.csv`
+- Top-k por coluna: `topk_<order_key>_<col>.csv`
+- Graficos: `hist_<order_key>_<col>.png`, `topk_<order_key>_<col>.png`
+- Logs: `logs/<run_tag>/train_order_1.log`
+
+Os paths padrao desses artefatos sao controlados por `config.py`:
+- `OUTPUT_BASE_DIR` (default: `/home-ext/caioloss/Dados/TVAE`)
+- `SAVE_DATA_DIR`, `LOG_DIR`, `PLOT_DIR`
+
+## Configuracao principal (config.py)
+
+Pontos-chave:
+- **Paths**: `REAL_DATA_PATH`, `OUTPUT_BASE_DIR`, `SAVE_DATA_SUBDIR`.
+- **Filtros temporais**: `FILTER_YEAR`, `FILTER_MONTHS`, `FILTER_DOW_MIN/MAX`.
+- **Split**:
+  - `TRAIN_FRAC` e `VAL_FRAC` controlam train/val.
+  - O `hold` e o restante (1 - TRAIN_FRAC - VAL_FRAC).
+  - Observacao: `TRAIN_FRAC` e reatribuido no arquivo (0.70 -> 0.35).
+- **Hiperparametros**: `LATENT_DIM`, `ENCODER_HIDDEN_DIMS`, `DECODER_HIDDEN_DIMS`,
+  `BATCH_SIZE`, `EPOCHS`, `LEARNING_RATE`, `WEIGHT_DECAY`.
+- **Pesos de loss**: `PICKUP_LOSS_WEIGHT`, `DROPOFF_LOSS_WEIGHT`,
+  `PAIR_KL_WEIGHT`, `PICKUP_KL_WEIGHT`.
+- **Sampling**: `SAMPLE_TEMPERATURE`, `SAMPLE_ROWS`.
+- **Metricas**: `COVERAGE_K`, `COVERAGE_MAX_SAMPLES`, `COVERAGE_TIME_WEIGHT`,
+  `COVERAGE_SPACE_WEIGHT`, `TIME_KEY_CARDINALITY`.
+- **Experimentos**: `EXPERIMENTS` define os overrides por run.
+
+## Observacoes sobre o fluxo de avaliacao
+
+- `train_all_orders()` sempre calcula `train_vs_val` com dados reais, antes do treino.
+- O treino usa `val_df` para early stopping.
+- Para metricas finais, `eval_df` e `hold_df` se existir; caso contrario, usa `val_df`.
+- `recalc_metrics_hold.py` padroniza a avaliacao usando hold para todos os runs.
