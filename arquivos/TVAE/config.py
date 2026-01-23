@@ -4,7 +4,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 # Data paths
-REAL_DATA_PATH = "/home-ext/caioloss/Dados/viagens_lat_long.parquet"
+REAL_DATA_PATH = "data/viagens_lat_long.parquet"
 DATETIME_COL = "tpep_pickup_datetime"
 PICKUP_ID_COL = "PULocationID"
 DROPOFF_ID_COL = "DOLocationID"
@@ -28,7 +28,7 @@ ENCODER_HIDDEN_DIMS = (256, 128)
 DECODER_HIDDEN_DIMS = (128, 128)
 LATENT_DIM = 32
 BATCH_SIZE = 1024
-EPOCHS = 30
+EPOCHS = 1 #30
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.0
 PICKUP_LOSS_WEIGHT = 1.2
@@ -77,8 +77,8 @@ GLOBAL_SEED = 42
 NUM_WORKERS = 0
 
 # Output dirs (all analyses/csvs under /home-ext/caioloss/Dados)
-OUTPUT_BASE_DIR = Path("/home-ext/caioloss/Dados/TVAE")
-SAVE_DATA_SUBDIR = "pickup_pair_kl"
+OUTPUT_BASE_DIR = Path("outputs")
+SAVE_DATA_SUBDIR = "ryc"
 SAVE_DATA_DIR = str(OUTPUT_BASE_DIR / "save_data" / SAVE_DATA_SUBDIR)
 LOG_DIR = str(OUTPUT_BASE_DIR / "logs")
 PLOT_DIR = str(OUTPUT_BASE_DIR / "graficos")
