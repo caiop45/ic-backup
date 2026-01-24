@@ -11,6 +11,7 @@ from utils.metrics import (
     chi2_counts,
     coverage_score,
     dcr_quantile,
+    dcr_within_quantile,
     graph_similarity_score,
     joint_metrics,
     jsd_counts,
@@ -71,9 +72,17 @@ def compute_metrics(
 
 
 def compute_paper_metrics(
-    train_df: pd.DataFrame, test_df: pd.DataFrame, synth_df: pd.DataFrame
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    synth_df: pd.DataFrame,
+    *,
+    include_within: bool = False,
 ) -> Dict[str, float]:
-    """Compute paper metrics (W1 time, graph similarity, coverage, DCR/rDCR)."""
+    """Compute paper metrics (W1 time, graph similarity, coverage, DCR/rDCR).
+
+    When include_within=True, also compute within-set DCR (real-real, synth-synth)
+    excluding self-matches.
+    """
     metrics: Dict[str, float] = {}
 
     metrics["w1_tr_te"] = wasserstein_time(
@@ -157,6 +166,29 @@ def compute_paper_metrics(
     metrics["dcr_alpha"] = float(dcr_alpha)
     metrics["dcr_max_samples"] = float(dcr_max_samples or 0)
     metrics["dcr_chunk_size"] = float(dcr_chunk)
+    metrics["dcr_within_excludes_self"] = 1.0
+
+    if include_within:
+        dcr_rr = dcr_within_quantile(
+            train_df,
+            alpha=dcr_alpha,
+            max_samples=dcr_max_samples,
+            chunk_size=dcr_chunk,
+            seed=config.GLOBAL_SEED,
+            w_time=config.COVERAGE_TIME_WEIGHT,
+            w_space=config.COVERAGE_SPACE_WEIGHT,
+        )
+        dcr_ss = dcr_within_quantile(
+            synth_df,
+            alpha=dcr_alpha,
+            max_samples=dcr_max_samples,
+            chunk_size=dcr_chunk,
+            seed=config.GLOBAL_SEED,
+            w_time=config.COVERAGE_TIME_WEIGHT,
+            w_space=config.COVERAGE_SPACE_WEIGHT,
+        )
+        metrics["dcr_rr_p05"] = float(dcr_rr)
+        metrics["dcr_ss_p05"] = float(dcr_ss)
 
     return metrics
 

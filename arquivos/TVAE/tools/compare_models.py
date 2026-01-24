@@ -25,6 +25,8 @@ DEFAULT_COLUMNS = [
     "dcr_tr_syn_p05",
     "dcr_hold_syn_p05",
     "rdcr_p05",
+    "dcr_rr_p05",
+    "dcr_ss_p05",
 ]
 
 

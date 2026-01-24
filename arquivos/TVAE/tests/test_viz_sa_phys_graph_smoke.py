@@ -11,7 +11,12 @@ matplotlib.use("Agg")
 
 from shapely.geometry import Polygon
 
-from topology.viz_phys_graph import RenderConfig, compute_degrees_for_locations, render_degree_map
+from topology.viz_phys_graph import (
+    RenderConfig,
+    compute_degrees_for_locations,
+    render_debug_zone_map,
+    render_degree_map,
+)
 
 
 def test_viz_render_smoke(tmp_path):
@@ -49,12 +54,36 @@ def test_viz_render_smoke(tmp_path):
         location_ids=location_ids,
         degrees=degrees,
         edges=edges,
+        near_miss_edges=None,
         title="Smoke",
         out_path=out_path,
         config=config,
         edge_mode="all",
         stats_text="nodes=4 edges=4 avg_degree=2.00 isolated=0",
+        edge_style="strict",
     )
 
     assert out_path.exists()
     assert out_path.stat().st_size > 10_000
+
+    debug_path = tmp_path / "debug_zone_1.png"
+    degrees_map = {loc: deg for loc, deg in zip(location_ids, degrees)}
+    render_debug_zone_map(
+        gdf,
+        "LocationID",
+        zone_id=1,
+        candidate_ids=location_ids,
+        location_ids=location_ids,
+        degrees_map=degrees_map,
+        strict_edges=edges,
+        tolerant_edges=edges,
+        near_miss_edges=[(1, 2, 0.05)],
+        out_path=debug_path,
+        config=config,
+        edge_style="both",
+        title="Debug zone 1",
+        show_labels=True,
+    )
+
+    assert debug_path.exists()
+    assert debug_path.stat().st_size > 10_000

@@ -23,6 +23,16 @@ Examples:
     --edges data/sa_phys_edges_rook.csv \
     --adjacency rook \
     --mappings data/zone_mappings.json
+
+  # (d) Debug strict vs near-miss adjacency with gap tolerance
+  python tools/viz_sa_phys_graph.py \
+    --zones data/taxi_zones.parquet \
+    --out-dir outputs/phys_viz_debug \
+    --adjacency-crs EPSG:3857 \
+    --gap-tol 5.0 \
+    --edge-style both \
+    --debug-zone-ids "5,84" \
+    --debug-radius-m 2500
 """
 from __future__ import annotations
 
@@ -35,6 +45,7 @@ import pandas as pd
 
 from topology.physical_adjacency import (
     compute_edges_location_id,
+    compute_near_miss_edges_location_id,
     find_location_id_col,
     fix_geometries,
     read_zones,
@@ -44,6 +55,7 @@ from topology.viz_phys_graph import (
     compute_degrees_for_locations,
     render_degree_map,
     render_delta_map,
+    render_debug_zone_map,
     render_zone_atlas,
     select_problem_zones,
 )
@@ -206,6 +218,12 @@ def main() -> None:
         help="Rook boundary length threshold. Defaults to 1e-9 for geographic or 5.0 for metric adjacency.",
     )
     ap.add_argument(
+        "--gap-tol",
+        type=float,
+        default=0.0,
+        help="Gap tolerance for tolerant queen adjacency (CRS units).",
+    )
+    ap.add_argument(
         "--crs-metric",
         choices=["none", "EPSG:3857"],
         default="EPSG:3857",
@@ -252,6 +270,30 @@ def main() -> None:
         default="all",
         help="Edge overlay mode (diff_only used for diff map)",
     )
+    ap.add_argument(
+        "--edge-style",
+        choices=["strict", "tolerant", "both"],
+        default=None,
+        help="Edge style for queen visualization (default both when gap_tol>0).",
+    )
+    ap.add_argument(
+        "--debug-zone-ids",
+        type=str,
+        default="",
+        help="Comma-separated LocationIDs for debug zoom views.",
+    )
+    ap.add_argument(
+        "--debug-radius-m",
+        type=float,
+        default=2500.0,
+        help="Radius in meters for debug zone context.",
+    )
+    ap.add_argument(
+        "--debug-max-candidates",
+        type=int,
+        default=40,
+        help="Max candidate zones in debug view (nearest by distance).",
+    )
     ap.add_argument("--atlas-topk", type=int, default=25)
     ap.add_argument(
         "--atlas-mode",
@@ -276,6 +318,9 @@ def main() -> None:
     tol = args.tol
     if tol is None:
         tol = 5.0 if args.adjacency_crs != "none" else 1e-9
+    gap_tol = float(args.gap_tol)
+    if gap_tol > 0 and args.adjacency_crs == "none":
+        print("[WARN] gap_tol set but adjacency_crs is 'none'. Consider EPSG:3857.")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -305,6 +350,9 @@ def main() -> None:
         basemap=args.basemap,
         basemap_provider=args.basemap_provider,
     )
+    edge_style = args.edge_style
+    if edge_style is None:
+        edge_style = "both" if gap_tol > 0 else "strict"
 
     if args.edges:
         edges_single = _extract_edges_from_csv(Path(args.edges), idx_to_location_id)
@@ -318,11 +366,13 @@ def main() -> None:
             location_ids=location_ids,
             degrees=degrees_single,
             edges=edges_to_draw,
+            near_miss_edges=None,
             title=f"Adjacency ({args.adjacency})",
             out_path=out_dir / f"map_{args.adjacency}.png",
             config=config,
             edge_mode=args.edge_mode,
             stats_text=stats_text,
+            edge_style="strict",
         )
 
         if args.atlas_mode in ("low_degree", "both"):
@@ -358,28 +408,65 @@ def main() -> None:
             tol=float(tol),
             prefilter="touches",
         )
-        edges_queen = compute_edges_location_id(
+        edges_queen_strict = compute_edges_location_id(
             gdf_adj,
             loc_col,
             mode="queen",
             tol=float(tol),
-            prefilter="touches",
+            prefilter="bbox",
+            gap_tol=0.0,
+        )
+        edges_queen_tol = compute_edges_location_id(
+            gdf_adj,
+            loc_col,
+            mode="queen",
+            tol=float(tol),
+            prefilter="bbox",
+            gap_tol=gap_tol,
         )
     else:
         if args.rook_edges is None or args.queen_edges is None:
             raise ValueError("--rook-edges and --queen-edges are required in load mode")
         edges_rook = _extract_edges_from_csv(Path(args.rook_edges), idx_to_location_id)
-        edges_queen = _extract_edges_from_csv(Path(args.queen_edges), idx_to_location_id)
+        edges_queen_strict = _extract_edges_from_csv(
+            Path(args.queen_edges), idx_to_location_id
+        )
+        edges_queen_tol = (
+            compute_edges_location_id(
+                gdf_adj,
+                loc_col,
+                mode="queen",
+                tol=float(tol),
+                prefilter="bbox",
+                gap_tol=gap_tol,
+            )
+            if gap_tol > 0
+            else edges_queen_strict
+        )
 
     degrees_rook = compute_degrees_for_locations(location_ids, edges_rook)
-    degrees_queen = compute_degrees_for_locations(location_ids, edges_queen)
-    delta = [int(q - r) for q, r in zip(degrees_queen, degrees_rook)]
+    degrees_queen_strict = compute_degrees_for_locations(location_ids, edges_queen_strict)
+    degrees_queen_tol = compute_degrees_for_locations(location_ids, edges_queen_tol)
+    delta = [int(q - r) for q, r in zip(degrees_queen_strict, degrees_rook)]
 
-    edges_only_in_queen = sorted(set(edges_queen) - set(edges_rook))
+    edges_only_in_queen = sorted(set(edges_queen_strict) - set(edges_rook))
+    near_miss = (
+        compute_near_miss_edges_location_id(
+            gdf_adj,
+            loc_col,
+            gap_tol=gap_tol,
+            prefilter="bbox",
+        )
+        if gap_tol > 0
+        else []
+    )
+    near_miss_pairs = [(u, v) for u, v, _ in near_miss]
+    edges_only_in_tolerant = sorted(set(edges_queen_tol) - set(edges_queen_strict))
 
     stats_rook = _stats_text(location_ids, edges_rook, degrees_rook)
-    stats_queen = _stats_text(location_ids, edges_queen, degrees_queen)
+    stats_queen = _stats_text(location_ids, edges_queen_strict, degrees_queen_strict)
     stats_diff = _stats_text(location_ids, edges_only_in_queen, [abs(d) for d in delta])
+    stats_queen_tol = _stats_text(location_ids, edges_queen_tol, degrees_queen_tol)
 
     edges_to_draw = edges_rook if args.edge_mode != "none" else None
     render_degree_map(
@@ -388,25 +475,41 @@ def main() -> None:
         location_ids=location_ids,
         degrees=degrees_rook,
         edges=edges_to_draw,
+        near_miss_edges=None,
         title="Rook adjacency",
         out_path=out_dir / "map_rook.png",
         config=config,
         edge_mode=args.edge_mode,
         stats_text=stats_rook,
+        edge_style="strict",
     )
 
-    edges_to_draw = edges_queen if args.edge_mode != "none" else None
+    if edge_style == "tolerant":
+        degree_mode = degrees_queen_tol
+        edges_to_draw = edges_queen_tol if args.edge_mode != "none" else None
+        near_to_draw = None
+        title = "Queen adjacency (tolerant)"
+        stats_text = stats_queen_tol
+    else:
+        degree_mode = degrees_queen_strict
+        edges_to_draw = edges_queen_strict if args.edge_mode != "none" else None
+        near_to_draw = near_miss_pairs if gap_tol > 0 else None
+        title = "Queen adjacency (strict)"
+        stats_text = stats_queen
+
     render_degree_map(
         gdf_plot,
         loc_col,
         location_ids=location_ids,
-        degrees=degrees_queen,
+        degrees=degree_mode,
         edges=edges_to_draw,
-        title="Queen adjacency",
+        near_miss_edges=near_to_draw,
+        title=title,
         out_path=out_dir / "map_queen.png",
         config=config,
         edge_mode=args.edge_mode,
-        stats_text=stats_queen,
+        stats_text=stats_text,
+        edge_style=edge_style,
     )
 
     diff_edges_to_draw = edges_only_in_queen if args.edge_mode != "none" else None
@@ -421,6 +524,91 @@ def main() -> None:
         config=config,
         stats_text=stats_diff,
     )
+
+    debug_ids = [int(x) for x in args.debug_zone_ids.split(",") if x.strip()] if args.debug_zone_ids else []
+    if debug_ids:
+        debug_rows = []
+        loc_to_idx = {loc: i for i, loc in enumerate(location_ids)}
+        geoms_adj = gdf_adj.set_index(loc_col)
+        for zone_id in debug_ids:
+            if zone_id not in geoms_adj.index:
+                print(f"[WARN] debug zone {zone_id} not found in zones")
+                continue
+            zone_geom = geoms_adj.loc[zone_id].geometry
+            if zone_geom is None or zone_geom.is_empty:
+                continue
+            buffer_geom = zone_geom.buffer(float(args.debug_radius_m))
+            candidates = gdf_adj[gdf_adj.geometry.intersects(buffer_geom)][loc_col].astype("int64").tolist()
+            if len(candidates) > int(args.debug_max_candidates):
+                dist_pairs = []
+                for cand in candidates:
+                    if cand == zone_id:
+                        continue
+                    cand_geom = geoms_adj.loc[cand].geometry
+                    if cand_geom is None or cand_geom.is_empty:
+                        continue
+                    dist_pairs.append((cand, float(zone_geom.distance(cand_geom))))
+                dist_pairs.sort(key=lambda x: (x[1], x[0]))
+                keep = [zone_id] + [c for c, _ in dist_pairs[: int(args.debug_max_candidates) - 1]]
+                candidates = keep
+
+            strict_degree = degrees_queen_strict[loc_to_idx[zone_id]]
+            tolerant_degree = degrees_queen_tol[loc_to_idx[zone_id]]
+            num_near = sum(1 for u, v, _ in near_miss if u == zone_id or v == zone_id)
+            nearest_distance = None
+            for other_loc in location_ids:
+                if other_loc == zone_id:
+                    continue
+                other_geom = geoms_adj.loc[other_loc].geometry
+                if other_geom is None or other_geom.is_empty:
+                    continue
+                dist = float(zone_geom.distance(other_geom))
+                if nearest_distance is None or dist < nearest_distance:
+                    nearest_distance = dist
+
+            debug_rows.append(
+                {
+                    "debug_zone_id": zone_id,
+                    "strict_degree": strict_degree,
+                    "tolerant_degree": tolerant_degree,
+                    "num_near_miss": num_near,
+                    "nearest_distance": nearest_distance,
+                }
+            )
+
+            near_for_zone = [
+                (u, v, dist)
+                for u, v, dist in near_miss
+                if (u == zone_id or v == zone_id) and (u in candidates and v in candidates)
+            ]
+
+            degree_map = {
+                int(loc): int(deg)
+                for loc, deg in zip(
+                    location_ids,
+                    degrees_queen_tol if edge_style in ("tolerant", "both") else degrees_queen_strict,
+                )
+            }
+
+            render_debug_zone_map(
+                gdf_plot,
+                loc_col,
+                zone_id=zone_id,
+                candidate_ids=candidates,
+                location_ids=location_ids,
+                degrees_map=degree_map,
+                strict_edges=edges_queen_strict,
+                tolerant_edges=edges_queen_tol,
+                near_miss_edges=near_for_zone,
+                out_path=out_dir / f"debug_zone_{zone_id}.png",
+                config=config,
+                edge_style=edge_style,
+                title=f"Debug zone {zone_id}",
+                show_labels=True,
+            )
+
+        if debug_rows:
+            pd.DataFrame(debug_rows).to_csv(out_dir / "debug_summary.csv", index=False)
 
     if args.atlas_mode in ("low_degree", "both"):
         zones = select_problem_zones(

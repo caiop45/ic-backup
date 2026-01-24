@@ -1,12 +1,14 @@
 """Polygon adjacency utilities (rook/queen) and graph statistics.
 
-Rook adjacency: polygons share a boundary segment. Operationally, the
+Rook adjacency (strict): polygons share a boundary segment. Operationally, the
 boundary intersection length must be > tol.
-Queen adjacency: polygons touch at any boundary point (corner-touch allowed).
+Queen adjacency (strict): polygons touch at any boundary point (corner-touch allowed).
+Queen adjacency (tolerant): touches OR distance <= gap_tol.
 
 Tol guidance:
 - Geographic CRS (EPSG:4326): use a tiny tol such as 1e-9.
 - Projected/metric CRS: use a tol in meters (e.g., 5.0).
+- gap_tol is expressed in the CRS units; recommend EPSG:3857 with gap_tol=5.0.
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ if TYPE_CHECKING:
 
 
 DEFAULT_ADJACENCY_MODE: Literal["rook", "queen"] = "rook"
-DEFAULT_PREFILTER = "touches"
+DEFAULT_PREFILTER = "bbox"
 DEFAULT_TOL_DEGREES = 1e-9
 DEFAULT_TOL_METERS = 5.0
 
@@ -162,14 +164,36 @@ def fix_geometries(gdf: "gpd.GeoDataFrame", mode: str = "none") -> "gpd.GeoDataF
     raise ValueError(f"Unsupported geometry fix mode: {mode}")
 
 
-def _bbox_intersects(bounds_a: Sequence[float], bounds_b: Sequence[float]) -> bool:
-    minx_a, miny_a, maxx_a, maxy_a = bounds_a
-    minx_b, miny_b, maxx_b, maxy_b = bounds_b
+def _expand_bounds(bounds: Sequence[float], expand: float) -> Tuple[float, float, float, float]:
+    minx, miny, maxx, maxy = bounds
+    return (minx - expand, miny - expand, maxx + expand, maxy + expand)
+
+
+def _bbox_intersects(
+    bounds_a: Sequence[float],
+    bounds_b: Sequence[float],
+    *,
+    expand: float = 0.0,
+) -> bool:
+    minx_a, miny_a, maxx_a, maxy_a = _expand_bounds(bounds_a, expand)
+    minx_b, miny_b, maxx_b, maxy_b = _expand_bounds(bounds_b, expand)
     if maxx_a < minx_b or maxx_b < minx_a:
         return False
     if maxy_a < miny_b or maxy_b < miny_a:
         return False
     return True
+
+
+def _prefilter_ok(gi, gj, prefilter: str, *, expand: float = 0.0) -> bool:
+    if prefilter == "touches":
+        return gi.touches(gj)
+    if prefilter == "boundary_intersects":
+        return gi.boundary.intersects(gj.boundary)
+    if prefilter == "bbox":
+        return _bbox_intersects(gi.bounds, gj.bounds, expand=expand)
+    if prefilter == "none":
+        return True
+    raise ValueError(f"Unsupported prefilter: {prefilter}")
 
 
 def _normalize_edge(u: int, v: int) -> Tuple[int, int]:
@@ -200,16 +224,19 @@ def compute_edges_location_id(
     tol: float = DEFAULT_TOL_DEGREES,
     *,
     prefilter: str = DEFAULT_PREFILTER,
+    gap_tol: float = 0.0,
 ) -> List[Tuple[int, int]]:
     """Compute adjacency edges in LocationID space.
 
     Returns edges as (LocationID_u, LocationID_v) with u < v.
 
-    prefilter (rook only):
+    prefilter:
       - "touches": use geom.touches() as a fast rejection
       - "boundary_intersects": use boundary.intersects() as a fast rejection
       - "bbox": use bounding box intersection as a fast rejection
       - "none": no prefilter
+
+    gap_tol (queen only): additional tolerance for near-miss adjacency, in CRS units.
     """
     if loc_col not in gdf.columns:
         raise ValueError(f"LocationID column '{loc_col}' not found")
@@ -218,6 +245,8 @@ def compute_edges_location_id(
     loc_series = gdf[loc_col]
     if loc_series.isnull().any():
         raise ValueError(f"LocationID column '{loc_col}' contains nulls")
+    if gap_tol < 0:
+        raise ValueError("gap_tol must be non-negative")
 
     loc_ids = [int(v) for v in loc_series.tolist()]
     geoms = gdf.geometry.tolist()
@@ -239,33 +268,166 @@ def compute_edges_location_id(
             if u_loc == v_loc:
                 continue
 
+            if not _prefilter_ok(gi, gj, prefilter, expand=gap_tol):
+                continue
+
             if mode == "queen":
                 if gi.touches(gj):
+                    edges.add(_normalize_edge(u_loc, v_loc))
+                elif gap_tol > 0 and float(gi.distance(gj)) <= gap_tol:
                     edges.add(_normalize_edge(u_loc, v_loc))
                 continue
 
             if mode != "rook":
                 raise ValueError(f"Unsupported adjacency mode: {mode}")
 
-            if prefilter == "touches":
-                if not gi.touches(gj):
-                    continue
-            elif prefilter == "boundary_intersects":
-                if not gi.boundary.intersects(gj.boundary):
-                    continue
-            elif prefilter == "bbox":
-                if not _bbox_intersects(gi.bounds, gj.bounds):
-                    continue
-            elif prefilter == "none":
-                pass
-            else:
-                raise ValueError(f"Unsupported prefilter: {prefilter}")
-
             inter = gi.boundary.intersection(gj.boundary)
             if (not inter.is_empty) and float(inter.length) > tol:
                 edges.add(_normalize_edge(u_loc, v_loc))
 
     return sorted(edges)
+
+
+def compute_near_miss_edges_location_id(
+    gdf: "gpd.GeoDataFrame",
+    loc_col: str,
+    *,
+    gap_tol: float,
+    prefilter: str = DEFAULT_PREFILTER,
+) -> List[Tuple[int, int, float]]:
+    """Report near-miss queen neighbors (distance <= gap_tol but not touching).
+
+    Returns a sorted list of (LocationID_u, LocationID_v, distance).
+    """
+    if loc_col not in gdf.columns:
+        raise ValueError(f"LocationID column '{loc_col}' not found")
+    if gap_tol <= 0:
+        return []
+
+    gdf = gdf.reset_index(drop=True)
+    loc_series = gdf[loc_col]
+    if loc_series.isnull().any():
+        raise ValueError(f"LocationID column '{loc_col}' contains nulls")
+
+    loc_ids = [int(v) for v in loc_series.tolist()]
+    geoms = gdf.geometry.tolist()
+
+    near: List[Tuple[int, int, float]] = []
+    n = len(geoms)
+
+    for i in range(n):
+        gi = geoms[i]
+        if gi is None or gi.is_empty:
+            continue
+        for j in range(i + 1, n):
+            gj = geoms[j]
+            if gj is None or gj.is_empty:
+                continue
+
+            u_loc = int(loc_ids[i])
+            v_loc = int(loc_ids[j])
+            if u_loc == v_loc:
+                continue
+
+            if not _prefilter_ok(gi, gj, prefilter, expand=gap_tol):
+                continue
+            if gi.touches(gj):
+                continue
+            dist = float(gi.distance(gj))
+            if dist <= gap_tol:
+                u_norm, v_norm = _normalize_edge(u_loc, v_loc)
+                near.append((u_norm, v_norm, dist))
+
+    near.sort(key=lambda x: (x[0], x[1], x[2]))
+    return near
+
+
+def augment_connect_components_by_distance(
+    gdf: "gpd.GeoDataFrame",
+    loc_col: str,
+    edges_loc: Iterable[Tuple[int, int]],
+    max_dist: float,
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int, float]]]:
+    """Augment edges by greedily connecting disconnected components.
+
+    Adds at most (num_components - 1) edges, each connecting the closest pair of
+    nodes between the smallest component and the rest, subject to max_dist.
+    Returns (edges_loc_sorted, added_edges_with_distance).
+    """
+    if max_dist <= 0:
+        return sorted({_normalize_edge(u, v) for u, v in edges_loc}), []
+    if loc_col not in gdf.columns:
+        raise ValueError(f"LocationID column '{loc_col}' not found")
+
+    gdf = gdf.reset_index(drop=True)
+    loc_series = gdf[loc_col]
+    if loc_series.isnull().any():
+        raise ValueError(f"LocationID column '{loc_col}' contains nulls")
+
+    loc_ids = [int(v) for v in loc_series.tolist()]
+    if len(set(loc_ids)) != len(loc_ids):
+        raise ValueError("LocationID column contains duplicates")
+
+    geoms = gdf.geometry.tolist()
+    num_nodes = len(loc_ids)
+    loc_to_idx = {loc: i for i, loc in enumerate(loc_ids)}
+
+    edges_loc_set: set[Tuple[int, int]] = set()
+    edges_idx_set: set[Tuple[int, int]] = set()
+    for u_loc, v_loc in edges_loc:
+        if u_loc not in loc_to_idx or v_loc not in loc_to_idx:
+            continue
+        u_idx = loc_to_idx[u_loc]
+        v_idx = loc_to_idx[v_loc]
+        edges_loc_set.add(_normalize_edge(int(u_loc), int(v_loc)))
+        edges_idx_set.add(_normalize_edge(u_idx, v_idx))
+
+    components = connected_components(num_nodes, edges_idx_set)
+    if len(components) <= 1:
+        return sorted(edges_loc_set), []
+
+    added: List[Tuple[int, int, float]] = []
+
+    while len(components) > 1:
+        comp = min(components, key=len)
+        comp_set = set(comp)
+        best_dist: float | None = None
+        best_pair: Tuple[int, int] | None = None
+
+        for u_idx in comp:
+            gu = geoms[u_idx]
+            if gu is None or gu.is_empty:
+                continue
+            for v_idx in range(num_nodes):
+                if v_idx in comp_set:
+                    continue
+                gv = geoms[v_idx]
+                if gv is None or gv.is_empty:
+                    continue
+                dist = float(gu.distance(gv))
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_pair = (u_idx, v_idx)
+
+        if best_pair is None or best_dist is None:
+            break
+        if best_dist > max_dist:
+            break
+
+        u_idx, v_idx = best_pair
+        u_loc = loc_ids[u_idx]
+        v_loc = loc_ids[v_idx]
+        u_norm, v_norm = _normalize_edge(u_loc, v_loc)
+
+        if (u_norm, v_norm) not in edges_loc_set:
+            edges_loc_set.add((u_norm, v_norm))
+            edges_idx_set.add(_normalize_edge(u_idx, v_idx))
+            added.append((u_norm, v_norm, best_dist))
+
+        components = connected_components(num_nodes, edges_idx_set)
+
+    added.sort(key=lambda x: (x[0], x[1], x[2]))
+    return sorted(edges_loc_set), added
 
 
 def edges_to_degrees(

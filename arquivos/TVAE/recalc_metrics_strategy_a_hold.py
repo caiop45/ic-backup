@@ -64,6 +64,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--split", type=str, choices=["val", "hold"], default=None)
     parser.add_argument("--no-plots", action="store_true")
+    parser.add_argument("--include-within-dcr", action="store_true")
     parser.add_argument(
         "--plot-dir",
         type=Path,
@@ -152,7 +153,12 @@ def main() -> int:
         plot_dir=plot_dir,
     )
 
-    paper_metrics = compute_paper_metrics(train_df[config.OUTPUT_COLUMNS], eval_metrics_df, synth_metrics_df)
+    paper_metrics = compute_paper_metrics(
+        train_df[config.OUTPUT_COLUMNS],
+        eval_metrics_df,
+        synth_metrics_df,
+        include_within=args.include_within_dcr,
+    )
     metrics.update(paper_metrics)
     metrics["eval_split"] = split_name
     metrics["n_real"] = float(len(eval_metrics_df))

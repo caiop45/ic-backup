@@ -21,6 +21,14 @@ Examples:
     --rook-edges data/sa_phys_edges_rook.csv \
     --queen-edges data/sa_phys_edges_queen.csv \
     --mappings data/zone_mappings.json
+
+  # Compute tolerant queen adjacency with 5m gap tolerance in EPSG:3857
+  python tools/inspect_sa_phys_graph.py \
+    --zones data/taxi_zones.zip \
+    --out-dir outputs/phys_graph_tol \
+    --crs-metric EPSG:3857 \
+    --gap-tol 5.0 \
+    --report-near-miss
 """
 from __future__ import annotations
 
@@ -37,6 +45,7 @@ from topology.physical_adjacency import (
     EdgeDiff,
     compute_edges_location_id,
     compute_graph_stats,
+    compute_near_miss_edges_location_id,
     diff_edges,
     find_location_id_col,
     fix_geometries,
@@ -72,6 +81,64 @@ def _graph_stats_to_dict(stats: GraphStats) -> dict[str, object]:
         "components_summary": asdict(stats.components_summary),
         "components": stats.components,
     }
+
+
+def _distance_pairs_for_isolated(
+    gdf: "gpd.GeoDataFrame",
+    loc_col: str,
+    isolated_locations: Sequence[int],
+    *,
+    nearest_k: int,
+) -> pd.DataFrame:
+    if nearest_k <= 0:
+        return pd.DataFrame(
+            columns=[
+                "location_id",
+                "nearest_location_id",
+                "nearest_distance",
+                "nearest_k_list",
+            ]
+        )
+
+    gdf = gdf.reset_index(drop=True)
+    loc_ids = [int(v) for v in gdf[loc_col].tolist()]
+    loc_to_idx = {loc: i for i, loc in enumerate(loc_ids)}
+    geoms = gdf.geometry.tolist()
+
+    rows = []
+    for loc in sorted(isolated_locations):
+        if loc not in loc_to_idx:
+            continue
+        idx = loc_to_idx[loc]
+        geom = geoms[idx]
+        if geom is None or geom.is_empty:
+            continue
+        dists = []
+        for other_loc, other_geom in zip(loc_ids, geoms):
+            if other_loc == loc:
+                continue
+            if other_geom is None or other_geom.is_empty:
+                continue
+            dist = float(geom.distance(other_geom))
+            dists.append((int(other_loc), dist))
+        dists.sort(key=lambda x: (x[1], x[0]))
+        nearest = dists[:nearest_k]
+        if not nearest:
+            continue
+        nearest_loc, nearest_dist = nearest[0]
+        nearest_list = [
+            {"location_id": loc_id, "distance": dist} for loc_id, dist in nearest
+        ]
+        rows.append(
+            {
+                "location_id": int(loc),
+                "nearest_location_id": int(nearest_loc),
+                "nearest_distance": float(nearest_dist),
+                "nearest_k_list": json.dumps(nearest_list),
+            }
+        )
+
+    return pd.DataFrame(rows)
 
 
 def _diff_stats_to_dict(diff: EdgeDiff) -> dict[str, object]:
@@ -315,6 +382,9 @@ def inspect_physical_graphs(
     prefilter: Prefilter,
     fix_geoms: str,
     crs_metric: str,
+    gap_tol: float,
+    report_near_miss: bool,
+    nearest_k: int,
     rook_edges_path: Path | None,
     queen_edges_path: Path | None,
     mappings_path: Path | None,
@@ -337,38 +407,92 @@ def inspect_physical_graphs(
         edges_rook = compute_edges_location_id(
             gdf, loc_col, mode="rook", tol=tol, prefilter=prefilter
         )
-        edges_queen = compute_edges_location_id(
-            gdf, loc_col, mode="queen", tol=tol, prefilter="touches"
+        edges_queen_strict = compute_edges_location_id(
+            gdf,
+            loc_col,
+            mode="queen",
+            tol=tol,
+            prefilter=prefilter,
+            gap_tol=0.0,
+        )
+        edges_queen_tol = compute_edges_location_id(
+            gdf,
+            loc_col,
+            mode="queen",
+            tol=tol,
+            prefilter=prefilter,
+            gap_tol=float(gap_tol),
         )
     else:
         if rook_edges_path is None or queen_edges_path is None:
             raise ValueError("--rook-edges and --queen-edges are required in load mode")
         edges_rook = _extract_edges_from_csv(rook_edges_path, idx_to_location_id)
-        edges_queen = _extract_edges_from_csv(queen_edges_path, idx_to_location_id)
+        edges_queen_strict = _extract_edges_from_csv(queen_edges_path, idx_to_location_id)
+        if gap_tol > 0:
+            edges_queen_tol = compute_edges_location_id(
+                gdf,
+                loc_col,
+                mode="queen",
+                tol=tol,
+                prefilter=prefilter,
+                gap_tol=float(gap_tol),
+            )
+        else:
+            edges_queen_tol = edges_queen_strict
 
     edges_rook_idx, missing_rook = _map_edges_to_indices(edges_rook, loc_to_idx)
-    edges_queen_idx, missing_queen = _map_edges_to_indices(edges_queen, loc_to_idx)
+    edges_queen_strict_idx, missing_queen_strict = _map_edges_to_indices(
+        edges_queen_strict, loc_to_idx
+    )
+    edges_queen_tol_idx, missing_queen_tol = _map_edges_to_indices(
+        edges_queen_tol, loc_to_idx
+    )
 
     if missing_rook:
         print(
             f"[WARN] {len(missing_rook)} LocationIDs in rook edges not found in zones. "
             f"Examples: {missing_rook[:10]}"
         )
-    if missing_queen:
+    if missing_queen_strict:
         print(
-            f"[WARN] {len(missing_queen)} LocationIDs in queen edges not found in zones. "
-            f"Examples: {missing_queen[:10]}"
+            f"[WARN] {len(missing_queen_strict)} LocationIDs in queen edges not found in zones. "
+            f"Examples: {missing_queen_strict[:10]}"
+        )
+    if missing_queen_tol and missing_queen_tol != missing_queen_strict:
+        print(
+            f"[WARN] {len(missing_queen_tol)} LocationIDs in tolerant queen edges not found in zones. "
+            f"Examples: {missing_queen_tol[:10]}"
         )
 
     idx_to_loc = {idx: loc for loc, idx in loc_to_idx.items()}
     edges_rook_loc = sorted((idx_to_loc[u], idx_to_loc[v]) for u, v in edges_rook_idx)
-    edges_queen_loc = sorted((idx_to_loc[u], idx_to_loc[v]) for u, v in edges_queen_idx)
-    edges_only_in_queen = sorted(set(edges_queen_loc) - set(edges_rook_loc))
-    edges_only_in_rook = sorted(set(edges_rook_loc) - set(edges_queen_loc))
+    edges_queen_strict_loc = sorted(
+        (idx_to_loc[u], idx_to_loc[v]) for u, v in edges_queen_strict_idx
+    )
+    edges_queen_tol_loc = sorted(
+        (idx_to_loc[u], idx_to_loc[v]) for u, v in edges_queen_tol_idx
+    )
+
+    edges_only_in_tolerant = sorted(
+        set(edges_queen_tol_loc) - set(edges_queen_strict_loc)
+    )
+    edges_only_in_strict = sorted(
+        set(edges_queen_strict_loc) - set(edges_queen_tol_loc)
+    )
 
     stats_rook = compute_graph_stats(num_nodes=num_nodes, edges=edges_rook_idx)
-    stats_queen = compute_graph_stats(num_nodes=num_nodes, edges=edges_queen_idx)
-    diff = diff_edges(edges_rook_idx, edges_queen_idx, num_nodes=num_nodes)
+    stats_queen_strict = compute_graph_stats(
+        num_nodes=num_nodes, edges=edges_queen_strict_idx
+    )
+    stats_queen_tol = compute_graph_stats(
+        num_nodes=num_nodes, edges=edges_queen_tol_idx
+    )
+    diff_rook_vs_queen = diff_edges(
+        edges_rook_idx, edges_queen_strict_idx, num_nodes=num_nodes
+    )
+    diff_strict_vs_tol = diff_edges(
+        edges_queen_strict_idx, edges_queen_tol_idx, num_nodes=num_nodes
+    )
 
     _ensure_out_dir(out_dir)
 
@@ -376,22 +500,42 @@ def inspect_physical_graphs(
         json.dumps(_graph_stats_to_dict(stats_rook), indent=2),
         encoding="utf-8",
     )
+    (out_dir / "stats_queen_strict.json").write_text(
+        json.dumps(_graph_stats_to_dict(stats_queen_strict), indent=2),
+        encoding="utf-8",
+    )
+    (out_dir / "stats_queen_tol.json").write_text(
+        json.dumps(_graph_stats_to_dict(stats_queen_tol), indent=2),
+        encoding="utf-8",
+    )
+    # Backward-compatible aliases
     (out_dir / "stats_queen.json").write_text(
-        json.dumps(_graph_stats_to_dict(stats_queen), indent=2),
+        json.dumps(_graph_stats_to_dict(stats_queen_strict), indent=2),
         encoding="utf-8",
     )
     (out_dir / "stats_diff.json").write_text(
-        json.dumps(_diff_stats_to_dict(diff), indent=2),
+        json.dumps(_diff_stats_to_dict(diff_rook_vs_queen), indent=2),
+        encoding="utf-8",
+    )
+    (out_dir / "stats_diff_rook_vs_queen.json").write_text(
+        json.dumps(_diff_stats_to_dict(diff_rook_vs_queen), indent=2),
+        encoding="utf-8",
+    )
+    (out_dir / "stats_diff_strict_vs_tol.json").write_text(
+        json.dumps(_diff_stats_to_dict(diff_strict_vs_tol), indent=2),
         encoding="utf-8",
     )
 
     degrees_rook = _degrees_df(location_ids, stats_rook.degrees)
-    degrees_queen = _degrees_df(location_ids, stats_queen.degrees)
+    degrees_queen_strict = _degrees_df(location_ids, stats_queen_strict.degrees)
+    degrees_queen_tol = _degrees_df(location_ids, stats_queen_tol.degrees)
 
     degrees_rook.to_csv(out_dir / "degrees_rook.csv", index=False)
-    degrees_queen.to_csv(out_dir / "degrees_queen.csv", index=False)
+    degrees_queen_strict.to_csv(out_dir / "degrees_queen_strict.csv", index=False)
+    degrees_queen_tol.to_csv(out_dir / "degrees_queen_tol.csv", index=False)
+    degrees_queen_strict.to_csv(out_dir / "degrees_queen.csv", index=False)
 
-    degree_delta_df = diff.degree_delta_df.copy()
+    degree_delta_df = diff_rook_vs_queen.degree_delta_df.copy()
     degree_delta_df["location_id"] = [
         location_ids[int(i)] for i in degree_delta_df["node"]
     ]
@@ -406,35 +550,110 @@ def inspect_physical_graphs(
             "degree_b": "degree_queen",
         }
     )
+    degree_delta_df.to_csv(out_dir / "degrees_delta_rook_vs_queen.csv", index=False)
     degree_delta_df.to_csv(out_dir / "degrees_delta.csv", index=False)
 
-    _edges_df(edges_rook_loc).to_csv(out_dir / "edges_rook.csv", index=False)
-    _edges_df(edges_queen_loc).to_csv(out_dir / "edges_queen.csv", index=False)
-    _edges_df(edges_only_in_queen).to_csv(
-        out_dir / "edges_only_in_queen.csv", index=False
+    degree_delta_strict_tol = diff_strict_vs_tol.degree_delta_df.copy()
+    degree_delta_strict_tol["location_id"] = [
+        location_ids[int(i)] for i in degree_delta_strict_tol["node"]
+    ]
+    degree_delta_strict_tol = degree_delta_strict_tol[[
+        "location_id",
+        "degree_a",
+        "degree_b",
+        "delta",
+    ]].rename(
+        columns={
+            "degree_a": "degree_queen_strict",
+            "degree_b": "degree_queen_tol",
+        }
     )
-    _edges_df(edges_only_in_rook).to_csv(
-        out_dir / "edges_only_in_rook.csv", index=False
+    degree_delta_strict_tol.to_csv(
+        out_dir / "degrees_delta_strict_vs_tol.csv", index=False
+    )
+
+    _edges_df(edges_rook_loc).to_csv(out_dir / "edges_rook.csv", index=False)
+    _edges_df(edges_queen_strict_loc).to_csv(
+        out_dir / "edges_queen_strict.csv", index=False
+    )
+    _edges_df(edges_queen_strict_loc).to_csv(
+        out_dir / "edges_queen.csv", index=False
+    )
+    _edges_df(edges_queen_tol_loc).to_csv(
+        out_dir / "edges_queen_tol.csv", index=False
+    )
+    _edges_df(edges_only_in_tolerant).to_csv(
+        out_dir / "edges_only_in_tolerant.csv", index=False
+    )
+    _edges_df(edges_only_in_strict).to_csv(
+        out_dir / "edges_only_in_strict.csv", index=False
     )
 
     (out_dir / "neighbors_rook.json").write_text(
         json.dumps(_neighbors_from_edges(location_ids, edges_rook_loc), indent=2),
         encoding="utf-8",
     )
+    (out_dir / "neighbors_queen_strict.json").write_text(
+        json.dumps(_neighbors_from_edges(location_ids, edges_queen_strict_loc), indent=2),
+        encoding="utf-8",
+    )
     (out_dir / "neighbors_queen.json").write_text(
-        json.dumps(_neighbors_from_edges(location_ids, edges_queen_loc), indent=2),
+        json.dumps(_neighbors_from_edges(location_ids, edges_queen_strict_loc), indent=2),
+        encoding="utf-8",
+    )
+    (out_dir / "neighbors_queen_tol.json").write_text(
+        json.dumps(_neighbors_from_edges(location_ids, edges_queen_tol_loc), indent=2),
         encoding="utf-8",
     )
 
+    if report_near_miss and gap_tol > 0:
+        near_miss = compute_near_miss_edges_location_id(
+            gdf,
+            loc_col,
+            gap_tol=float(gap_tol),
+            prefilter=prefilter,
+        )
+        near_miss_df = pd.DataFrame(
+            near_miss, columns=["u_location_id", "v_location_id", "distance"]
+        )
+        near_miss_df.to_csv(out_dir / "near_miss_edges.csv", index=False)
+        print(f"[INFO] near-miss edges (gap_tol={gap_tol})={len(near_miss_df)}")
+
+    isolated_locations = [location_ids[i] for i in stats_queen_strict.isolated_nodes]
+    isolated_df = _distance_pairs_for_isolated(
+        gdf,
+        loc_col,
+        isolated_locations,
+        nearest_k=int(nearest_k),
+    )
+    isolated_df.to_csv(out_dir / "isolated_nearest.csv", index=False)
+
+    if not isolated_df.empty:
+        print(
+            f"[INFO] isolated (strict queen) nearest neighbors written: {len(isolated_df)}"
+        )
+
     print(f"[INFO] num_nodes={num_nodes}")
-    print(f"[INFO] rook edges={stats_rook.num_edges}, queen edges={stats_queen.num_edges}")
-    print(f"[INFO] rook isolated={len(stats_rook.isolated_nodes)}, queen isolated={len(stats_queen.isolated_nodes)}")
     print(
-        f"[INFO] diff edges only in queen={len(edges_only_in_queen)}, only in rook={len(edges_only_in_rook)}"
+        f"[INFO] rook edges={stats_rook.num_edges}, "
+        f"queen_strict edges={stats_queen_strict.num_edges}, "
+        f"queen_tol edges={stats_queen_tol.num_edges}"
+    )
+    print(
+        f"[INFO] rook isolated={len(stats_rook.isolated_nodes)}, "
+        f"queen_strict isolated={len(stats_queen_strict.isolated_nodes)}, "
+        f"queen_tol isolated={len(stats_queen_tol.isolated_nodes)}"
+    )
+    print(
+        f"[INFO] edges only in tolerant={len(edges_only_in_tolerant)}, "
+        f"only in strict={len(edges_only_in_strict)}"
     )
 
     _print_top_low_degree(degrees_rook, top_k)
     _print_top_delta(degree_delta_df, top_k)
+
+    if gap_tol > 0 and not report_near_miss:
+        print("[INFO] gap_tol set but near-miss reporting disabled")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -457,9 +676,26 @@ def _parse_args() -> argparse.Namespace:
         help="Length threshold for rook adjacency. Default 1e-9 for geographic, 5.0 for metric CRS.",
     )
     ap.add_argument(
+        "--gap-tol",
+        type=float,
+        default=0.0,
+        help="Gap tolerance for queen adjacency (CRS units).",
+    )
+    ap.add_argument(
+        "--report-near-miss",
+        action="store_true",
+        help="Write near-miss edges when gap_tol > 0.",
+    )
+    ap.add_argument(
+        "--nearest-k",
+        type=int,
+        default=5,
+        help="Number of nearest neighbors to list for isolated nodes.",
+    )
+    ap.add_argument(
         "--prefilter",
         choices=["touches", "boundary_intersects", "bbox", "none"],
-        default="touches",
+        default="bbox",
         help="Prefilter used for rook adjacency",
     )
     ap.add_argument(
@@ -472,7 +708,7 @@ def _parse_args() -> argparse.Namespace:
         "--crs-metric",
         choices=["none", "EPSG:3857"],
         default="none",
-        help="If set, compute adjacency in metric CRS (tol interpreted in meters)",
+        help="If set, compute adjacency in metric CRS (tol/gap_tol in meters)",
     )
     ap.add_argument(
         "--top-k-problems",
@@ -489,6 +725,10 @@ def main() -> None:
     tol = args.tol
     if tol is None:
         tol = 5.0 if args.crs_metric != "none" else 1e-9
+    gap_tol = float(args.gap_tol)
+    report_near_miss = bool(args.report_near_miss or gap_tol > 0)
+    if gap_tol > 0 and args.crs_metric == "none":
+        print("[WARN] gap_tol is set but crs_metric is 'none'. Consider EPSG:3857.")
 
     gdf = read_zones(args.zones)
     inspect_physical_graphs(
@@ -499,6 +739,9 @@ def main() -> None:
         prefilter=args.prefilter,
         fix_geoms=args.fix_geoms,
         crs_metric=args.crs_metric,
+        gap_tol=gap_tol,
+        report_near_miss=report_near_miss,
+        nearest_k=int(args.nearest_k),
         rook_edges_path=Path(args.rook_edges) if args.rook_edges else None,
         queen_edges_path=Path(args.queen_edges) if args.queen_edges else None,
         mappings_path=Path(args.mappings) if args.mappings else None,

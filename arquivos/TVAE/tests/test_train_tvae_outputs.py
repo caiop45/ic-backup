@@ -1,3 +1,4 @@
+import csv
 import json
 
 import pandas as pd
@@ -88,3 +89,10 @@ def test_train_tvae_outputs(tmp_path, monkeypatch, hold_rows):
     else:
         assert not hold_metrics_path.exists()
         assert not hold_synth_path.exists()
+
+    scalars_path = output_dir / "logs" / "scalars.csv"
+    assert scalars_path.exists()
+    with scalars_path.open("r", encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    tags = {row["tag"] for row in rows}
+    assert "train/ce_pickup_id" in tags or "val/acc_dropoff_id" in tags

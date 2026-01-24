@@ -16,15 +16,17 @@ from utils.metrics import save_metrics_json
 from utils.serialization import build_model_from_checkpoint, load_checkpoint, load_mappings
 
 
-def _resolve_checkpoint(run_dir: Path) -> Path:
-    checkpoint = run_dir / "tvae_order_1.pt"
+def _resolve_checkpoint(run_dir: Path, order_key: str) -> Path:
+    """Resolve checkpoint path for a given order key (e.g., order_1)."""
+    checkpoint = run_dir / f"tvae_{order_key}.pt"
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
     return checkpoint
 
 
-def _resolve_mappings(run_dir: Path) -> Path:
-    mappings = run_dir / "mappings_order_1.json"
+def _resolve_mappings(run_dir: Path, order_key: str) -> Path:
+    """Resolve mappings path for a given order key (e.g., order_1)."""
+    mappings = run_dir / f"mappings_{order_key}.json"
     if not mappings.exists():
         raise FileNotFoundError(f"Mappings not found: {mappings}")
     return mappings
@@ -47,6 +49,7 @@ def main() -> int:
     parser.add_argument("--order-key", type=str, default="order_1")
     parser.add_argument("--force-sample", action="store_true")
     parser.add_argument("--no-plots", action="store_true")
+    parser.add_argument("--include-within-dcr", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--plot-dir",
@@ -63,10 +66,11 @@ def main() -> int:
     args = parser.parse_args()
 
     run_dir = args.run_dir
+    order_key = args.order_key
     checkpoint = args.checkpoint
     mappings = args.mappings
     if mappings is None:
-        mappings = _resolve_mappings(run_dir)
+        mappings = _resolve_mappings(run_dir, order_key)
 
     train_df, _, hold_df = load_and_split()
     transformer = load_mappings(mappings)
@@ -76,7 +80,7 @@ def main() -> int:
     if len(hold_df) == 0:
         raise RuntimeError("hold_df vazio; ajuste TRAIN_FRAC/VAL_FRAC ou use outro split.")
 
-    model_key = args.order_key
+    model_key = order_key
     if not model_key.startswith("tvae_"):
         model_key = f"tvae_{model_key}"
     synth_path = run_dir / "data" / f"synthetic_{model_key}_hold.csv"
@@ -86,7 +90,7 @@ def main() -> int:
         print(f"[Recalc] loaded synth from {synth_path}")
     else:
         if checkpoint is None:
-            checkpoint = _resolve_checkpoint(run_dir)
+            checkpoint = _resolve_checkpoint(run_dir, order_key)
 
         if args.device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -132,7 +136,12 @@ def main() -> int:
         plot_dir=plot_dir,
     )
 
-    paper_metrics = compute_paper_metrics(train_df, hold_df, synth_df)
+    paper_metrics = compute_paper_metrics(
+        train_df,
+        hold_df,
+        synth_df,
+        include_within=args.include_within_dcr,
+    )
     metrics.update(paper_metrics)
     metrics["eval_split"] = "hold"
     metrics["n_real"] = float(len(hold_df))

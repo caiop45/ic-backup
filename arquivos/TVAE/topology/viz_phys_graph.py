@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 EdgeMode = Literal["none", "all", "diff_only"]
 BasemapMode = Literal["auto", "on", "off"]
 LabelField = Literal["LocationID", "idx"]
+EdgeStyle = Literal["strict", "tolerant", "both"]
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,22 @@ def _build_edge_lines(
     return lines
 
 
+def _near_miss_pairs(
+    near_miss_edges: Iterable[tuple[int, int]] | Iterable[tuple[int, int, float]],
+) -> list[tuple[int, int]]:
+    pairs: list[tuple[int, int]] = []
+    for item in near_miss_edges:
+        u = int(item[0])
+        v = int(item[1])
+        if u == v:
+            continue
+        if u < v:
+            pairs.append((u, v))
+        else:
+            pairs.append((v, u))
+    return pairs
+
+
 def _plot_polygons(
     gdf: "gpd.GeoDataFrame",
     value_col: str,
@@ -228,11 +245,13 @@ def render_degree_map(
     location_ids: Sequence[int],
     degrees: Sequence[int],
     edges: Iterable[tuple[int, int]] | None,
+    near_miss_edges: Iterable[tuple[int, int]] | Iterable[tuple[int, int, float]] | None = None,
     title: str,
     out_path: Path,
     config: RenderConfig,
     edge_mode: EdgeMode,
     stats_text: str,
+    edge_style: EdgeStyle = "strict",
 ) -> None:
     import matplotlib.pyplot as plt
     import matplotlib.cm as cm
@@ -273,6 +292,18 @@ def render_degree_map(
                 linewidth=config.edge_width,
                 alpha=config.edge_alpha,
             )
+
+        if edge_style == "both" and near_miss_edges:
+            near_pairs = _near_miss_pairs(near_miss_edges)
+            near_lines = _build_edge_lines(near_pairs, rep_points)
+            if near_lines:
+                gpd.GeoSeries(near_lines, crs=gdf_plot.crs).plot(
+                    ax=ax,
+                    color="crimson",
+                    linewidth=max(config.edge_width, 0.6),
+                    alpha=min(config.edge_alpha + 0.2, 1.0),
+                    linestyle="--",
+                )
 
     add_basemap(
         ax,
@@ -377,6 +408,147 @@ def render_delta_map(
     ax.set_axis_off()
     ax.set_title(title)
 
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_debug_zone_map(
+    gdf: "gpd.GeoDataFrame",
+    loc_col: str,
+    *,
+    zone_id: int,
+    candidate_ids: Sequence[int],
+    location_ids: Sequence[int],
+    degrees_map: Mapping[int, int],
+    strict_edges: Iterable[tuple[int, int]],
+    tolerant_edges: Iterable[tuple[int, int]] | None,
+    near_miss_edges: Iterable[tuple[int, int, float]] | None,
+    out_path: Path,
+    config: RenderConfig,
+    edge_style: EdgeStyle,
+    title: str,
+    show_labels: bool,
+) -> None:
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    import matplotlib.colors as colors
+    import matplotlib.patheffects as patheffects
+
+    subset = gdf[gdf[loc_col].isin(candidate_ids)].copy()
+    if subset.empty:
+        return
+
+    subset["degree"] = subset[loc_col].map(degrees_map).fillna(0).astype("int64")
+
+    fig, ax = plt.subplots(figsize=config.figsize, dpi=config.dpi)
+    cmap = cm.get_cmap("RdYlGn")
+    norm = colors.Normalize(
+        vmin=float(subset["degree"].min()),
+        vmax=float(subset["degree"].max()),
+    )
+    _plot_polygons(
+        subset,
+        "degree",
+        cmap=cmap,
+        norm=norm,
+        alpha=config.poly_alpha,
+        ax=ax,
+        linewidth=0.2,
+    )
+
+    zone_geom = subset[subset[loc_col] == zone_id]
+    if not zone_geom.empty:
+        zone_geom.plot(
+            ax=ax,
+            facecolor="none",
+            edgecolor="black",
+            linewidth=1.5,
+        )
+
+    strict_set = set(tuple(sorted(edge)) for edge in strict_edges)
+    strict_neighbors = {
+        v if u == zone_id else u
+        for u, v in strict_set
+        if u == zone_id or v == zone_id
+    }
+
+    if strict_neighbors:
+        subset[subset[loc_col].isin(strict_neighbors)].plot(
+            ax=ax,
+            facecolor="none",
+            edgecolor="black",
+            linewidth=0.8,
+        )
+
+    rep_points = _representative_points(subset, loc_col)
+
+    def _draw_edges(edge_pairs, color: str, linestyle: str, width: float, alpha: float) -> None:
+        lines = _build_edge_lines(edge_pairs, rep_points)
+        if not lines:
+            return
+        try:
+            import geopandas as gpd
+        except Exception as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError("geopandas is required for edge rendering") from exc
+        gpd.GeoSeries(lines, crs=subset.crs).plot(
+            ax=ax,
+            color=color,
+            linewidth=width,
+            alpha=alpha,
+            linestyle=linestyle,
+        )
+
+    if edge_style in ("strict", "both"):
+        _draw_edges(strict_set, "black", "-", max(config.edge_width, 0.6), config.edge_alpha)
+
+    if edge_style in ("tolerant", "both") and tolerant_edges is not None:
+        if edge_style == "tolerant":
+            _draw_edges(tolerant_edges, "black", "-", max(config.edge_width, 0.6), config.edge_alpha)
+
+    if edge_style == "both" and near_miss_edges:
+        near_pairs = [(int(u), int(v)) for u, v, _ in near_miss_edges]
+        _draw_edges(near_pairs, "crimson", "--", max(config.edge_width, 0.8), min(config.edge_alpha + 0.2, 1.0))
+
+        for u, v, dist in near_miss_edges:
+            if u not in rep_points or v not in rep_points:
+                continue
+            x1, y1 = rep_points[u]
+            x2, y2 = rep_points[v]
+            mx = (x1 + x2) / 2.0
+            my = (y1 + y2) / 2.0
+            txt = ax.text(
+                mx,
+                my,
+                f"{dist:.1f}",
+                fontsize=max(config.label_fontsize - 1, 5),
+                ha="center",
+                va="center",
+                color="crimson",
+            )
+            txt.set_path_effects(
+                [patheffects.withStroke(linewidth=1.0, foreground="white")]
+            )
+
+    add_basemap(
+        ax,
+        subset.crs,
+        mode=config.basemap,
+        provider=config.basemap_provider,
+    )
+
+    if show_labels:
+        idx_map = {int(loc): i for i, loc in enumerate(location_ids)}
+        _add_labels(
+            ax,
+            subset,
+            loc_col,
+            config.label_field,
+            config.label_fontsize,
+            idx_map,
+        )
+
+    ax.set_axis_off()
+    ax.set_title(title)
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
 

@@ -17,6 +17,8 @@ def test_compare_models_table_columns_order():
         "cov_tr_te": 80.0,
         "cov_tr_syn": 15.0,
         "cov_te_syn": 14.0,
+        "dcr_rr_p05": 0.1,
+        "dcr_ss_p05": 0.2,
     }
     strategy_metrics = {
         "eval_split": "hold",
@@ -31,6 +33,8 @@ def test_compare_models_table_columns_order():
         "cov_tr_te": 78.0,
         "cov_tr_syn": 12.0,
         "cov_te_syn": 11.0,
+        "dcr_rr_p05": 0.11,
+        "dcr_ss_p05": 0.21,
     }
 
     df = build_metrics_table(baseline_metrics, strategy_metrics)

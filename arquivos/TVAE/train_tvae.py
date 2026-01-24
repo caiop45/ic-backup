@@ -6,7 +6,7 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Tuple, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -148,13 +148,16 @@ def _epoch_pass(
     pickup_kl_weight: float = 0.0,
     train: bool,
     optimizer: torch.optim.Optimizer | None = None,
-) -> Tuple[float, float, float, float, float]:
+) -> "EpochStats":
     total_loss = 0.0
     total_ce = 0.0
     total_kl = 0.0
     total_pair_kl = 0.0
     total_pickup_kl = 0.0
     total_batches = 0
+    per_col_ce_sum = {col: 0.0 for col in order}
+    per_col_correct = {col: 0.0 for col in order}
+    per_col_count = {col: 0.0 for col in order}
 
     if train:
         model.train()
@@ -178,10 +181,12 @@ def _epoch_pass(
                     weight = config.PICKUP_LOSS_WEIGHT
                 elif col == "dropoff_id":
                     weight = config.DROPOFF_LOSS_WEIGHT
-                ce_loss = ce_loss + weight * F.cross_entropy(
-                    logits[col],
-                    y_indices[col],
-                )
+                ce_val = F.cross_entropy(logits[col], y_indices[col])
+                ce_loss = ce_loss + weight * ce_val
+                per_col_ce_sum[col] += float(ce_val.item())
+                preds = logits[col].argmax(dim=1)
+                per_col_correct[col] += float((preds == y_indices[col]).sum().item())
+                per_col_count[col] += float(y_indices[col].numel())
             kld = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
             pair_kl = torch.tensor(0.0, device=device)
             if pair_kl_log_q is not None and pair_kl_weight > 0.0:
@@ -214,14 +219,39 @@ def _epoch_pass(
         total_batches += 1
 
     if total_batches == 0:
-        return 0.0, 0.0, 0.0, 0.0, 0.0
-    return (
-        total_loss / total_batches,
-        total_ce / total_batches,
-        total_kl / total_batches,
-        total_pair_kl / total_batches,
-        total_pickup_kl / total_batches,
-    )
+        return {
+            "loss": 0.0,
+            "recon": 0.0,
+            "kl": 0.0,
+            "pair_kl": 0.0,
+            "pickup_kl": 0.0,
+            "per_col_ce": {col: 0.0 for col in order},
+            "per_col_acc": {col: 0.0 for col in order},
+        }
+    per_col_ce = {col: per_col_ce_sum[col] / total_batches for col in order}
+    per_col_acc = {
+        col: (per_col_correct[col] / per_col_count[col]) if per_col_count[col] > 0 else 0.0
+        for col in order
+    }
+    return {
+        "loss": total_loss / total_batches,
+        "recon": total_ce / total_batches,
+        "kl": total_kl / total_batches,
+        "pair_kl": total_pair_kl / total_batches,
+        "pickup_kl": total_pickup_kl / total_batches,
+        "per_col_ce": per_col_ce,
+        "per_col_acc": per_col_acc,
+    }
+
+
+class EpochStats(TypedDict):
+    loss: float
+    recon: float
+    kl: float
+    pair_kl: float
+    pickup_kl: float
+    per_col_ce: Dict[str, float]
+    per_col_acc: Dict[str, float]
 
 
 def _grad_norm(model: TVAEAutoregressive) -> float:
@@ -477,7 +507,7 @@ def train_single_order(
 
         for epoch in range(1, config.EPOCHS + 1):
             beta = _kl_beta(epoch)
-            train_loss, train_ce, train_kl, train_pair_kl, train_pickup_kl = _epoch_pass(
+            train_stats = _epoch_pass(
                 model,
                 train_loader,
                 col_to_idx,
@@ -493,7 +523,7 @@ def train_single_order(
             )
             grad_norm = _grad_norm(model)
             param_norm = _param_norm(model)
-            val_loss, val_ce, val_kl, val_pair_kl, val_pickup_kl = _epoch_pass(
+            val_stats = _epoch_pass(
                 model,
                 val_loader,
                 col_to_idx,
@@ -509,28 +539,54 @@ def train_single_order(
 
             logger.log_scalars(
                 {
-                    "loss": train_loss,
-                    "recon": train_ce,
-                    "kl": train_kl,
-                    "pair_kl": train_pair_kl,
-                    "pickup_kl": train_pickup_kl,
+                    "loss": train_stats["loss"],
+                    "recon": train_stats["recon"],
+                    "kl": train_stats["kl"],
+                    "pair_kl": train_stats["pair_kl"],
+                    "pickup_kl": train_stats["pickup_kl"],
                 },
                 step=epoch,
                 prefix="train",
             )
             logger.log_scalars(
                 {
-                    "loss": val_loss,
-                    "recon": val_ce,
-                    "kl": val_kl,
-                    "pair_kl": val_pair_kl,
-                    "pickup_kl": val_pickup_kl,
+                    "loss": val_stats["loss"],
+                    "recon": val_stats["recon"],
+                    "kl": val_stats["kl"],
+                    "pair_kl": val_stats["pair_kl"],
+                    "pickup_kl": val_stats["pickup_kl"],
                 },
                 step=epoch,
                 prefix="val",
             )
             logger.log_scalar("grad_norm", grad_norm, step=epoch, split="train")
             logger.log_scalar("param_norm", param_norm, step=epoch, split="train")
+            # Per-head reconstruction and accuracy highlight bottlenecks per variable.
+            for col in order:
+                logger.log_scalar(
+                    f"ce_{col}",
+                    train_stats["per_col_ce"][col],
+                    step=epoch,
+                    split="train",
+                )
+                logger.log_scalar(
+                    f"acc_{col}",
+                    train_stats["per_col_acc"][col],
+                    step=epoch,
+                    split="train",
+                )
+                logger.log_scalar(
+                    f"ce_{col}",
+                    val_stats["per_col_ce"][col],
+                    step=epoch,
+                    split="val",
+                )
+                logger.log_scalar(
+                    f"acc_{col}",
+                    val_stats["per_col_acc"][col],
+                    step=epoch,
+                    split="val",
+                )
 
             if monitor_every > 0 and epoch % monitor_every == 0 and len(val_df) > 0:
                 n_monitor = len(val_df)
@@ -557,25 +613,25 @@ def train_single_order(
                 {
                     "epoch": epoch,
                     "beta": beta,
-                    "train_loss": train_loss,
-                    "train_ce": train_ce,
-                    "train_kl": train_kl,
-                    "train_pair_kl": train_pair_kl,
-                    "train_pickup_kl": train_pickup_kl,
-                    "val_loss": val_loss,
-                    "val_ce": val_ce,
-                    "val_kl": val_kl,
-                    "val_pair_kl": val_pair_kl,
-                    "val_pickup_kl": val_pickup_kl,
+                    "train_loss": train_stats["loss"],
+                    "train_ce": train_stats["recon"],
+                    "train_kl": train_stats["kl"],
+                    "train_pair_kl": train_stats["pair_kl"],
+                    "train_pickup_kl": train_stats["pickup_kl"],
+                    "val_loss": val_stats["loss"],
+                    "val_ce": val_stats["recon"],
+                    "val_kl": val_stats["kl"],
+                    "val_pair_kl": val_stats["pair_kl"],
+                    "val_pickup_kl": val_stats["pickup_kl"],
                 }
             )
             print(
-                f"[Epoch {epoch:03d}] beta={beta:.4f} train_loss={train_loss:.4f} "
-                f"val_loss={val_loss:.4f}"
+                f"[Epoch {epoch:03d}] beta={beta:.4f} train_loss={train_stats['loss']:.4f} "
+                f"val_loss={val_stats['loss']:.4f}"
             )
 
-            if best_val - val_loss > config.MIN_DELTA:
-                best_val = val_loss
+            if best_val - val_stats["loss"] > config.MIN_DELTA:
+                best_val = val_stats["loss"]
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 epochs_no_improve = 0
             else:

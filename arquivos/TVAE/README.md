@@ -205,6 +205,8 @@ Controles principais (em `config.py`):
 Tags usadas no TVAE:
 - `train/loss`, `train/recon`, `train/kl`, `train/pair_kl`, `train/pickup_kl`
 - `val/loss`, `val/recon`, `val/kl`, `val/pair_kl`, `val/pickup_kl`
+- `train/ce_<col>`, `train/acc_<col>` (por coluna em `OUTPUT_COLUMNS`)
+- `val/ce_<col>`, `val/acc_<col>` (por coluna em `OUTPUT_COLUMNS`)
 - `train/grad_norm`, `train/param_norm`
 - `metrics/*` (fast metrics opcionais em amostras pequenas)
 

@@ -626,6 +626,67 @@ def dcr_quantile(
     return float(np.quantile(all_min, alpha))
 
 
+def dcr_within_quantile(
+    df: pd.DataFrame,
+    *,
+    alpha: float,
+    max_samples: int | None,
+    chunk_size: int,
+    seed: int,
+    w_time: float,
+    w_space: float,
+) -> float:
+    """Compute within-set DCR quantile excluding self-matches.
+
+    Uses the same distance as coverage_score. Self-matches are excluded by
+    setting the diagonal to +inf for same-chunk comparisons.
+    """
+    if len(df) < 2:
+        return 0.0
+
+    df = _sample_df(df, max_samples, seed)
+    if len(df) < 2:
+        return 0.0
+
+    chunk_size = int(max(1, chunk_size))
+    min_dists: List[np.ndarray] = []
+
+    ref_day = df["dia_da_semana"].to_numpy(dtype=np.int64)
+    ref_hour = df["hora_do_dia"].to_numpy(dtype=np.int64)
+    ref_pickup = df["pickup_id"].to_numpy(dtype=np.int64)
+    ref_dropoff = df["dropoff_id"].to_numpy(dtype=np.int64)
+
+    n_ref = len(df)
+    for start in range(0, n_ref, chunk_size):
+        end = min(n_ref, start + chunk_size)
+        chunk_min = np.full(end - start, np.inf, dtype=np.float32)
+        for j in range(0, n_ref, chunk_size):
+            j_end = min(n_ref, j + chunk_size)
+            dist = _pairwise_distance(
+                ref_day[start:end],
+                ref_hour[start:end],
+                ref_pickup[start:end],
+                ref_dropoff[start:end],
+                ref_day[j:j_end],
+                ref_hour[j:j_end],
+                ref_pickup[j:j_end],
+                ref_dropoff[j:j_end],
+                w_time=w_time,
+                w_space=w_space,
+            )
+            if start == j:
+                diag_len = min(end - start, j_end - j)
+                idx = np.arange(diag_len)
+                dist[idx, idx] = np.inf
+            chunk_min = np.minimum(chunk_min, dist.min(axis=1))
+        min_dists.append(chunk_min)
+
+    if not min_dists:
+        return 0.0
+    all_min = np.concatenate(min_dists)
+    return float(np.quantile(all_min, alpha))
+
+
 def rdcr(
     train_df: pd.DataFrame,
     hold_df: pd.DataFrame,
