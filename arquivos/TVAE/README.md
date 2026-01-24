@@ -141,6 +141,7 @@ Arquivos de debug/temporarios nao sao documentados aqui.
 - W1 temporal: `w1_tr_te`, `w1_tr_syn`, `w1_te_syn`.
 - Graph similarity: `g_tr_te`, `g_tr_syn`, `g_te_syn` (valores * 100).
 - Coverage KNN: `cov_tr_te`, `cov_tr_syn`, `cov_te_syn` (porcentagem).
+- Privacidade (DCR): `dcr_tr_syn_p05`, `dcr_hold_syn_p05`, `rdcr_p05`.
 
 ## Scripts principais (o que fazem)
 
@@ -155,7 +156,9 @@ Arquivos de debug/temporarios nao sao documentados aqui.
 
 - `recalc_metrics_hold.py`
   - Recalcula metricas usando o hold como real.
-  - Gera `metrics_order_1_hold.json` e plots no diretorio escolhido.
+  - Gera `metrics/metrics_tvae_order_1_hold.json` e plots no diretorio escolhido.
+  - Recomendado: treine uma vez, depois ajuste métricas e rode o recalc reutilizando
+    o sintético salvo (use `--force-sample` apenas quando quiser reamostrar).
 
 - `analyze_spatial.py`
   - Analise espacial profunda:
@@ -177,19 +180,84 @@ Arquivos de debug/temporarios nao sao documentados aqui.
 - `tools/collect_requirements.py`
   - Coleta imports externos e pode gerar um requirements basico.
 
+## Logging de experimentos
+
+O logger leve (`utils/experiment_logger.py`) grava sempre em CSV e pode opcionalmente
+gerar logs do TensorBoard.
+
+- CSV: `<run_dir>/logs/scalars.csv` (colunas: `step`, `tag`, `value`)
+- TensorBoard (quando habilitado): `<run_dir>/logs/tensorboard/`
+
+Tags usadas no Strategy A:
+- `train/nll_total`, `train/nll_h`, `train/nll_o`, `train/nll_d`, `train/nll_r`
+- `val/nll_total`, `val/nll_h`, `val/nll_o`, `val/nll_d`, `val/nll_r`
+- `train/grad_norm`, `train/param_norm`
+- `flow/layer_logdet_mean_<i>`, `flow/layer_logdet_std_<i>` (diagnosticos do flow)
+- `metrics/*` (fast metrics opcionais em amostras pequenas)
+
+Controles principais (em `config.py`):
+- `SA_LOG_BATCH_EVERY` (0 desliga logs por batch)
+- `SA_FLOW_DIAG_EVERY_EPOCHS`
+- `SA_MONITOR_METRICS_EVERY_EPOCHS`
+- `SA_MONITOR_MAX_SAMPLES`
+- `SA_MONITOR_DO_COVERAGE`
+
+Tags usadas no TVAE:
+- `train/loss`, `train/recon`, `train/kl`, `train/pair_kl`, `train/pickup_kl`
+- `val/loss`, `val/recon`, `val/kl`, `val/pair_kl`, `val/pickup_kl`
+- `train/grad_norm`, `train/param_norm`
+- `metrics/*` (fast metrics opcionais em amostras pequenas)
+
+Controles principais (em `config.py`):
+- `TVAE_MONITOR_METRICS_EVERY_EPOCHS`
+- `TVAE_MONITOR_MAX_SAMPLES`
+
+Exemplo de uso:
+
+```
+from utils.experiment_logger import ExperimentLogger
+
+logger = ExperimentLogger(run_dir=output_dir, run_name="baseline", enable_tb=True)
+logger.log_scalar("loss", value=1.23, step=1, split="train")
+logger.log_scalars({"loss": 0.98, "acc": 0.45}, step=1, prefix="val")
+logger.close()
+```
+
+Para habilitar/desabilitar TensorBoard:
+- `LOG_ENABLE_TENSORBOARD = True` em `config.py`
+
+Para visualizar:
+
+```
+tensorboard --logdir outputs/save_data/baseline/logs/tensorboard
+```
+
+## Plot de curvas de treino
+
+O script `tools/plot_training_curves.py` lê `scalars.csv` e exporta PNGs.
+
+```
+python tools/plot_training_curves.py --run-dir outputs/save_data/baseline
+```
+
+Por default, salva em `<run_dir>/plots/`. Use `--out-dir` para customizar.
+
 ## Artefatos gerados por run
 
 Para cada run (ex.: `baseline`), os principais arquivos salvos sao:
 - Checkpoint: `tvae_order_1.pt`
 - Mappings: `mappings_order_1.json`
 - Perdas: `loss_order_1.csv`
-- Metricas do run: `metrics_order_1.json`
-- Metricas hold (quando recalculado): `metrics_order_1_hold.json`
+- Metricas por split: `metrics/metrics_tvae_order_1_val.json` e
+  `metrics/metrics_tvae_order_1_hold.json` (se hold existir)
+- Sinteticos por split: `data/synthetic_tvae_order_1_val.csv` e
+  `data/synthetic_tvae_order_1_hold.csv` (se hold existir)
+- Alias legacy: `metrics_order_1.json` (hold se existir; senao val)
 - Baseline train_vs_val: `metrics_train_vs_val.json`
 - Estatisticas de split: `split_stats_train.json`, `split_stats_val.json`, `split_stats_hold.json`
 - Contagens por split: `counts_<split>_<col>.csv`
-- Top-k por coluna: `topk_<order_key>_<col>.csv`
-- Graficos: `hist_<order_key>_<col>.png`, `topk_<order_key>_<col>.png`
+- Top-k por coluna: `metrics/topk_<model_key>_<split>_<col>.csv`
+- Graficos: `hist_<model_key>_<split>_<col>.png`, `topk_<model_key>_<split>_<col>.png`
 - Logs: `logs/<run_tag>/train_order_1.log`
 
 Os paths padrao desses artefatos sao controlados por `config.py`:
@@ -218,7 +286,10 @@ Pontos-chave:
 
 - `train_all_orders()` sempre calcula `train_vs_val` com dados reais, antes do treino.
 - O treino usa `val_df` para early stopping.
-- Para metricas finais, `eval_df` e `hold_df` se existir; caso contrario, usa `val_df`.
+- As metricas sao calculadas separadamente para `val` e `hold` (quando existir), e
+  `compute_metrics` e `compute_paper_metrics` usam o mesmo split.
+- Os artefatos de avaliacao ficam em `metrics/` (JSONs e tabelas top-k) e `data/`
+  (sinteticos).
 - `recalc_metrics_hold.py` padroniza a avaliacao usando hold para todos os runs.
 
 ## Strategy A pipeline
@@ -242,9 +313,12 @@ Saidas em `SAVE_DATA_DIR/strategy_a`:
 - `strategy_a.pt`
 - `mappings_strategy_a.json`
 - `loss_strategy_a.csv`
-- `metrics_strategy_a.json`
-- `metrics_strategy_a_hold.json` (se hold existir)
-- `synthetic_strategy_a_hold.csv` (se hold existir)
+- `metrics/metrics_strategy_a_val.json`
+- `metrics/metrics_strategy_a_hold.json` (se hold existir)
+- `data/synthetic_strategy_a_val.csv`
+- `data/synthetic_strategy_a_hold.csv` (se hold existir)
+- Aliases legacy: `metrics_strategy_a.json`, `metrics_strategy_a_hold.json`,
+  `synthetic_strategy_a_hold.csv`
 
 ### Amostrar Strategy A (standalone)
 
@@ -290,6 +364,19 @@ python tools/compare_models.py \
   --strategy-a-run outputs/save_data/strategy_a \
   --out-dir outputs/compare_models
 ```
+
+## One-shot pipeline
+
+Para rodar tudo em uma tacada (treino, recalc, comparacao e plots):
+
+```
+python tools/run_full_pipeline.py --build-embeddings
+```
+
+Flags uteis:
+- `--force-train` re-treina mesmo se o run ja existir
+- `--force-sample` reamostra sinteticos no recalc
+- `--baseline-run-dir` / `--strategy-run-dir` para reutilizar dirs existentes
 
 ## Reproducing paper metrics
 

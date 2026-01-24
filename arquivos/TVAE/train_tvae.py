@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import math
 import sys
 import time
 from pathlib import Path
@@ -18,8 +19,9 @@ from data_processing.loader import load_and_split
 from data_processing.transformer import CategoricalTransformer
 from models.tvae_ar import TVAEAutoregressive
 from utils.evaluation import compute_metrics, compute_paper_metrics
+from utils.experiment_logger import ExperimentLogger
 from utils.helpers import set_seed
-from utils.metrics import joint_counts, save_metrics_json
+from utils.metrics import compute_fast_metrics, joint_counts, save_metrics_json
 from utils.serialization import save_checkpoint, save_mappings
 
 #Debug prints
@@ -221,6 +223,22 @@ def _epoch_pass(
         total_pickup_kl / total_batches,
     )
 
+
+def _grad_norm(model: TVAEAutoregressive) -> float:
+    total = 0.0
+    for param in model.parameters():
+        if param.grad is None:
+            continue
+        total += float(param.grad.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
+
+def _param_norm(model: TVAEAutoregressive) -> float:
+    total = 0.0
+    for param in model.parameters():
+        total += float(param.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
 #Gera os dados sintéticos usando o decoder do TVAE. 
 #Ele faz isso sequencialmente dessa forma:
 # Primeiro ele pega algum ponto aleatório Z no espaço latente
@@ -346,6 +364,15 @@ def _run_dirs(run_tag: str) -> Tuple[Path, Path, Path]:
     plot_dir.mkdir(parents=True, exist_ok=True)
     return output_dir, log_dir, plot_dir
 
+
+def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
+    """Create per-run subdirectories for metrics JSONs and synthetic samples."""
+    metrics_dir = output_dir / "metrics"
+    data_dir = output_dir / "data"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return metrics_dir, data_dir
+
 #Aqui ele junta o fluxo todo:
 
 #_prepare_dataloaders: prepara os dados para o treino
@@ -374,7 +401,13 @@ def train_single_order(
     output_dir: Path,
     log_dir: Path,
     plot_dir: Path,
-) -> Dict[str, float]:
+) -> Dict[str, float | str]:
+    """Train TVAE and evaluate val/hold splits separately.
+
+    The validation split is used for early stopping/model selection, while the hold
+    split (when present) is reserved for final reporting. We keep outputs separated
+    to avoid mixing metrics from different splits.
+    """
     set_seed(config.GLOBAL_SEED)
 
     log_path = log_dir / f"train_{order_key}.log"
@@ -382,11 +415,19 @@ def train_single_order(
 
     with log_path.open("w", encoding="utf-8") as fh, contextlib.redirect_stdout(
         Tee(sys.stdout, fh)
-    ):
+    ), ExperimentLogger(output_dir, run_name=order_key, enable_tb=None) as logger:
         print(f"[Train] order_key={order_key} order={order}")
         print(
             f"[Train] train_rows={len(train_df)} val_rows={len(val_df)} hold_rows={len(hold_df)}"
         )
+        if config.EPOCHS <= 1:
+            print(
+                "[Warn] config.EPOCHS <= 1. This is intended for smoke tests; "
+                "use a higher value for real training runs."
+            )
+
+        metrics_dir, data_dir = _run_output_subdirs(output_dir)
+        model_key = f"tvae_{order_key}"
 
         train_loader, val_loader, train_idx, val_idx = _prepare_dataloaders(
             train_df, val_df, transformer
@@ -431,6 +472,9 @@ def train_single_order(
 
         loss_rows = []
         train_start = time.monotonic()
+        monitor_every = int(getattr(config, "TVAE_MONITOR_METRICS_EVERY_EPOCHS", 0))
+        monitor_max = int(getattr(config, "TVAE_MONITOR_MAX_SAMPLES", 0))
+
         for epoch in range(1, config.EPOCHS + 1):
             beta = _kl_beta(epoch)
             train_loss, train_ce, train_kl, train_pair_kl, train_pickup_kl = _epoch_pass(
@@ -447,6 +491,8 @@ def train_single_order(
                 train=True,
                 optimizer=optimizer,
             )
+            grad_norm = _grad_norm(model)
+            param_norm = _param_norm(model)
             val_loss, val_ce, val_kl, val_pair_kl, val_pickup_kl = _epoch_pass(
                 model,
                 val_loader,
@@ -460,6 +506,52 @@ def train_single_order(
                 pickup_kl_weight=config.PICKUP_KL_WEIGHT,
                 train=False,
             )
+
+            logger.log_scalars(
+                {
+                    "loss": train_loss,
+                    "recon": train_ce,
+                    "kl": train_kl,
+                    "pair_kl": train_pair_kl,
+                    "pickup_kl": train_pickup_kl,
+                },
+                step=epoch,
+                prefix="train",
+            )
+            logger.log_scalars(
+                {
+                    "loss": val_loss,
+                    "recon": val_ce,
+                    "kl": val_kl,
+                    "pair_kl": val_pair_kl,
+                    "pickup_kl": val_pickup_kl,
+                },
+                step=epoch,
+                prefix="val",
+            )
+            logger.log_scalar("grad_norm", grad_norm, step=epoch, split="train")
+            logger.log_scalar("param_norm", param_norm, step=epoch, split="train")
+
+            if monitor_every > 0 and epoch % monitor_every == 0 and len(val_df) > 0:
+                n_monitor = len(val_df)
+                if monitor_max > 0:
+                    n_monitor = min(n_monitor, monitor_max)
+                if n_monitor > 0:
+                    if n_monitor < len(val_df):
+                        val_subset = val_df.sample(
+                            n=n_monitor, random_state=config.GLOBAL_SEED
+                        ).reset_index(drop=True)
+                    else:
+                        val_subset = val_df
+                    synth_subset = _sample_synthetic(
+                        model,
+                        transformer,
+                        n_samples=n_monitor,
+                        temperature=config.SAMPLE_TEMPERATURE,
+                        device=device,
+                    )
+                    fast_metrics = compute_fast_metrics(val_subset, synth_subset)
+                    logger.log_scalars(fast_metrics, step=epoch, prefix="metrics")
 
             loss_rows.append(
                 {
@@ -520,37 +612,77 @@ def train_single_order(
             metrics={"best_val": best_val},
         )
 
-        eval_df = hold_df if len(hold_df) > 0 else val_df
-        n_eval = _eval_sample_size(eval_df)
-        sample_start = time.monotonic()
-        synth_df = _sample_synthetic(
-            model,
-            transformer,
-            n_samples=n_eval,
-            temperature=config.SAMPLE_TEMPERATURE,
-            device=device,
-        )
-        sample_time_min = (time.monotonic() - sample_start) / 60.0
+        def _evaluate_split(
+            split_name: str,
+            eval_df: pd.DataFrame,
+        ) -> Dict[str, float | str] | None:
+            """Sample synthetic data and compute metrics for a given split."""
+            if len(eval_df) == 0:
+                print(f"[Train] skip {split_name}: empty split")
+                return None
 
-        metrics = compute_metrics(
-            val_df,
-            synth_df,
-            order_key=order_key,
-            output_dir=output_dir,
-            plot_dir=plot_dir,
-        )
-        paper_metrics = compute_paper_metrics(train_df, eval_df, synth_df)
-        metrics.update(paper_metrics)
-        metrics["best_val"] = best_val
-        metrics["train_time_min"] = train_time_min
-        metrics["sample_time_min"] = sample_time_min
-        metrics["total_time_min"] = train_time_min + sample_time_min
-        save_metrics_json(metrics, output_dir / f"metrics_{order_key}.json")
+            n_eval = _eval_sample_size(eval_df)
+            sample_start = time.monotonic()
+            synth_df = _sample_synthetic(
+                model,
+                transformer,
+                n_samples=n_eval,
+                temperature=config.SAMPLE_TEMPERATURE,
+                device=device,
+            )
+            sample_time_min = (time.monotonic() - sample_start) / 60.0
+
+            synth_path = data_dir / f"synthetic_{model_key}_{split_name}.csv"
+            synth_df.to_csv(synth_path, index=False)
+
+            metrics: Dict[str, float | str] = compute_metrics(
+                eval_df,
+                synth_df,
+                order_key=f"{model_key}_{split_name}",
+                output_dir=metrics_dir,
+                plot_dir=plot_dir,
+            )
+            paper_metrics = compute_paper_metrics(train_df, eval_df, synth_df)
+            metrics.update(paper_metrics)
+            metrics["eval_split"] = split_name
+            metrics["n_train"] = float(len(train_df))
+            metrics["n_eval"] = float(n_eval)
+            metrics["n_synth"] = float(len(synth_df))
+            metrics["best_val"] = float(best_val)
+            metrics["train_time_min"] = float(train_time_min)
+            metrics["sample_time_min"] = float(sample_time_min)
+            metrics["total_time_min"] = float(train_time_min + sample_time_min)
+
+            metrics_path = metrics_dir / f"metrics_{model_key}_{split_name}.json"
+            save_metrics_json(metrics, metrics_path)
+            print(f"[Train] metrics saved: {metrics_path}")
+            print(f"[Train] synthetic saved: {synth_path}")
+            return metrics
+
+        # Evaluate splits independently: val drives early stopping, hold is for final reporting.
+        metrics_by_split: Dict[str, Dict[str, float | str]] = {}
+        val_metrics = _evaluate_split("val", val_df)
+        if val_metrics is not None:
+            metrics_by_split["val"] = val_metrics
+
+        hold_metrics = _evaluate_split("hold", hold_df)
+        if hold_metrics is not None:
+            metrics_by_split["hold"] = hold_metrics
+
+        alias_metrics = None
+        if "hold" in metrics_by_split:
+            alias_metrics = metrics_by_split["hold"]
+        elif "val" in metrics_by_split:
+            alias_metrics = metrics_by_split["val"]
+
+        if alias_metrics is not None:
+            save_metrics_json(alias_metrics, output_dir / f"metrics_{order_key}.json")
 
         print(f"[Train] saved checkpoint={checkpoint_path}")
-        print(f"[Train] metrics keys={sorted(metrics.keys())}")
+        if alias_metrics is not None:
+            print(f"[Train] metrics keys={sorted(alias_metrics.keys())}")
 
-    return metrics
+    return alias_metrics or {}
 
 #Aqui é só o orquestrador final, ele chama o train_single_order 
 # A implementação tá desse jeito pq anteriormente eu tinha testado treinar ordens diferentes e comparar

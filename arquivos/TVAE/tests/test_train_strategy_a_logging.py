@@ -1,4 +1,4 @@
-import json
+import csv
 
 import pandas as pd
 import pytest
@@ -10,7 +10,7 @@ import config
 import train_strategy_a
 
 
-def test_train_strategy_a_smoke(tmp_path, monkeypatch):
+def test_train_strategy_a_logging(tmp_path, monkeypatch):
     df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2, 3],
@@ -38,35 +38,26 @@ def test_train_strategy_a_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(config, "PLOT_DIR", str(tmp_path / "plots"))
 
-    monkeypatch.setattr(config, "SA_EPOCHS", 1)
+    monkeypatch.setattr(config, "SA_EPOCHS", 2)
     monkeypatch.setattr(config, "SA_BATCH_SIZE", 2)
     monkeypatch.setattr(config, "SA_LR", 1e-3)
     monkeypatch.setattr(config, "SA_WEIGHT_DECAY", 0.0)
     monkeypatch.setattr(config, "SA_EVAL_SAMPLE_RATIO", 1.0)
-    monkeypatch.setattr(config, "COVERAGE_MAX_SAMPLES", 10)
-    monkeypatch.setattr(config, "COVERAGE_CHUNK_SIZE", 2)
+    monkeypatch.setattr(config, "SA_LOG_BATCH_EVERY", 0)
+    monkeypatch.setattr(config, "SA_FLOW_DIAG_EVERY_EPOCHS", 0)
+    monkeypatch.setattr(config, "SA_MONITOR_METRICS_EVERY_EPOCHS", 0)
+    monkeypatch.setattr(config, "LOG_ENABLE_TENSORBOARD", False)
+    monkeypatch.setattr(config, "LOG_FLUSH_EVERY", 1)
 
-    train_strategy_a.train_strategy_a(run_tag="smoke", device=torch.device("cpu"))
+    train_strategy_a.train_strategy_a(run_tag="logging", device=torch.device("cpu"))
 
-    output_dir = tmp_path / "save" / "smoke"
-    metrics_path = output_dir / "metrics" / "metrics_strategy_a_val.json"
-    hold_metrics_path = output_dir / "metrics" / "metrics_strategy_a_hold.json"
-    checkpoint_path = output_dir / "strategy_a.pt"
-    mappings_path = output_dir / "mappings_strategy_a.json"
-    loss_path = output_dir / "loss_strategy_a.csv"
-    synth_val_path = output_dir / "data" / "synthetic_strategy_a_val.csv"
-    synth_hold_path = output_dir / "data" / "synthetic_strategy_a_hold.csv"
+    output_dir = tmp_path / "save" / "logging"
+    csv_path = output_dir / "logs" / "scalars.csv"
+    assert csv_path.exists()
 
-    assert checkpoint_path.exists()
-    assert mappings_path.exists()
-    assert loss_path.exists()
-    assert metrics_path.exists()
-    assert hold_metrics_path.exists()
-    assert synth_val_path.exists()
-    assert synth_hold_path.exists()
+    with csv_path.open("r", encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
 
-    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-    assert metrics.get("eval_split") == "val"
-    assert "w1_tr_te" in metrics
-    assert "g_tr_syn" in metrics
-    assert "cov_tr_syn" in metrics
+    tags = {row["tag"] for row in rows}
+    assert "train/nll_total" in tags
+    assert "val/nll_total" in tags

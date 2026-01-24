@@ -22,6 +22,9 @@ DEFAULT_COLUMNS = [
     "cov_tr_te",
     "cov_tr_syn",
     "cov_te_syn",
+    "dcr_tr_syn_p05",
+    "dcr_hold_syn_p05",
+    "rdcr_p05",
 ]
 
 
@@ -73,7 +76,7 @@ def _write_markdown_table(df: pd.DataFrame, path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _resolve_metrics_path(run_dir: Path, preferred: Iterable[str]) -> Path:
+def _resolve_metrics_path(run_dir: Path, preferred: Iterable[str | Path]) -> Path:
     for name in preferred:
         candidate = run_dir / name
         if candidate.exists():
@@ -91,10 +94,24 @@ def main() -> int:
     args = parser.parse_args()
 
     baseline_metrics_path = args.baseline_metrics or _resolve_metrics_path(
-        args.baseline_run, ["metrics_order_1_hold.json", "metrics_order_1.json"]
+        args.baseline_run,
+        [
+            Path("metrics") / "metrics_tvae_order_1_hold.json",
+            Path("metrics") / "metrics_tvae_order_1_val.json",
+            "metrics_tvae_order_1_hold.json",
+            "metrics_tvae_order_1_val.json",
+            "metrics_order_1_hold.json",
+            "metrics_order_1.json",
+        ],
     )
     strategy_metrics_path = args.strategy_metrics or _resolve_metrics_path(
-        args.strategy_a_run, ["metrics_strategy_a_hold.json", "metrics_strategy_a.json"]
+        args.strategy_a_run,
+        [
+            Path("metrics") / "metrics_strategy_a_hold.json",
+            Path("metrics") / "metrics_strategy_a_val.json",
+            "metrics_strategy_a_hold.json",
+            "metrics_strategy_a.json",
+        ],
     )
 
     baseline_metrics = _load_metrics(baseline_metrics_path)

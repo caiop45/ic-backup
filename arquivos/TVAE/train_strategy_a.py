@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import math
 import sys
 import time
 from pathlib import Path
@@ -17,7 +18,8 @@ from data_processing.strategy_a_loader import load_and_split_strategy_a
 from data_processing.strategy_a_transformer import StrategyATransformer
 from models.strategy_a import StrategyAModel
 from utils.evaluation import compute_metrics, compute_paper_metrics
-from utils.metrics import save_metrics_json
+from utils.experiment_logger import ExperimentLogger
+from utils.metrics import compute_fast_metrics, save_metrics_json
 from utils.serialization import save_checkpoint, save_strategy_a_mappings
 
 
@@ -43,6 +45,15 @@ def _run_dirs(run_tag: str) -> Tuple[Path, Path, Path]:
     log_dir.mkdir(parents=True, exist_ok=True)
     plot_dir.mkdir(parents=True, exist_ok=True)
     return output_dir, log_dir, plot_dir
+
+
+def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
+    """Create per-run subdirectories for metrics JSONs and synthetic samples."""
+    metrics_dir = output_dir / "metrics"
+    data_dir = output_dir / "data"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return metrics_dir, data_dir
 
 
 def _filter_known(df: pd.DataFrame, transformer: StrategyATransformer) -> pd.DataFrame:
@@ -90,6 +101,10 @@ def _epoch_pass(
     *,
     train: bool,
     optimizer: torch.optim.Optimizer | None = None,
+    logger: ExperimentLogger | None = None,
+    log_every: int = 0,
+    epoch: int | None = None,
+    split_name: str = "train",
 ) -> Dict[str, float]:
     totals = {"nll_h": 0.0, "nll_o": 0.0, "nll_d": 0.0, "nll_r": 0.0, "nll_total": 0.0}
     batches = 0
@@ -99,7 +114,7 @@ def _epoch_pass(
     else:
         model.eval()
 
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader, start=1):
         h_idx, o_idx, d_idx, r, *u_vals = batch
         h_idx = h_idx.to(device)
         o_idx = o_idx.to(device)
@@ -122,9 +137,44 @@ def _epoch_pass(
             totals[key] += float(nll[key].item())
         batches += 1
 
+        if (
+            logger is not None
+            and log_every > 0
+            and epoch is not None
+            and batch_idx % log_every == 0
+        ):
+            batch_step = epoch * 1_000_000 + batch_idx
+            logger.log_scalars(
+                {
+                    "nll_total": float(nll["nll_total"].item()),
+                    "nll_h": float(nll["nll_h"].item()),
+                    "nll_o": float(nll["nll_o"].item()),
+                    "nll_d": float(nll["nll_d"].item()),
+                    "nll_r": float(nll["nll_r"].item()),
+                },
+                step=batch_step,
+                prefix=f"{split_name}/batch",
+            )
+
     if batches == 0:
         return totals
     return {key: val / batches for key, val in totals.items()}
+
+
+def _grad_norm(model: StrategyAModel) -> float:
+    total = 0.0
+    for param in model.parameters():
+        if param.grad is None:
+            continue
+        total += float(param.grad.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
+
+def _param_norm(model: StrategyAModel) -> float:
+    total = 0.0
+    for param in model.parameters():
+        total += float(param.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
 
 
 def _eval_sample_size(n_rows: int) -> int:
@@ -190,11 +240,12 @@ def _load_zone_embeddings() -> Tuple[torch.Tensor, Path, str]:
 
 def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
     output_dir, log_dir, plot_dir = _run_dirs(run_tag)
+    metrics_dir, data_dir = _run_output_subdirs(output_dir)
     log_path = log_dir / "train_strategy_a.log"
 
     with log_path.open("w", encoding="utf-8") as fh, contextlib.redirect_stdout(
         Tee(sys.stdout, fh)
-    ):
+    ), ExperimentLogger(output_dir, run_name=run_tag, enable_tb=None) as logger:
         print(f"[Strategy A] run_tag={run_tag}")
 
         raw_train_df, raw_val_df, raw_hold_df = load_and_split_strategy_a()
@@ -273,6 +324,16 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
 
         train_start = time.monotonic()
         epochs = int(getattr(config, "SA_EPOCHS", 30))
+        log_every = int(getattr(config, "SA_LOG_BATCH_EVERY", 0))
+        flow_every = int(getattr(config, "SA_FLOW_DIAG_EVERY_EPOCHS", 0))
+        monitor_every = int(getattr(config, "SA_MONITOR_METRICS_EVERY_EPOCHS", 0))
+        monitor_max = int(getattr(config, "SA_MONITOR_MAX_SAMPLES", 0))
+
+        diag_batch = None
+        for batch in val_loader:
+            diag_batch = batch
+            break
+
         for epoch in range(1, epochs + 1):
             train_nll = _epoch_pass(
                 model,
@@ -281,6 +342,10 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                 device,
                 train=True,
                 optimizer=optimizer,
+                logger=logger if log_every > 0 else None,
+                log_every=log_every,
+                epoch=epoch,
+                split_name="train",
             )
             val_nll = _epoch_pass(
                 model,
@@ -305,6 +370,92 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                     "val_nll_r": val_nll["nll_r"],
                 }
             )
+
+            logger.log_scalars(
+                {
+                    "nll_total": train_nll["nll_total"],
+                    "nll_h": train_nll["nll_h"],
+                    "nll_o": train_nll["nll_o"],
+                    "nll_d": train_nll["nll_d"],
+                    "nll_r": train_nll["nll_r"],
+                },
+                step=epoch,
+                prefix="train",
+            )
+            logger.log_scalars(
+                {
+                    "nll_total": val_nll["nll_total"],
+                    "nll_h": val_nll["nll_h"],
+                    "nll_o": val_nll["nll_o"],
+                    "nll_d": val_nll["nll_d"],
+                    "nll_r": val_nll["nll_r"],
+                },
+                step=epoch,
+                prefix="val",
+            )
+            logger.log_scalar("grad_norm", _grad_norm(model), step=epoch, split="train")
+            logger.log_scalar("param_norm", _param_norm(model), step=epoch, split="train")
+
+            if flow_every > 0 and epoch % flow_every == 0 and diag_batch is not None:
+                h_idx, o_idx, d_idx, r, *u_vals = diag_batch
+                u = {col: u_vals[i].to(device) for i, col in enumerate(conditional_cols)}
+                h_idx = h_idx.to(device)
+                o_idx = o_idx.to(device)
+                d_idx = d_idx.to(device)
+                r = r.to(device)
+                was_training = model.training
+                model.eval()
+                with torch.no_grad():
+                    _, diag = model.residual_log_prob(
+                        u=u,
+                        h_idx=h_idx,
+                        o_idx=o_idx,
+                        d_idx=d_idx,
+                        r=r,
+                        return_layer_logdet=True,
+                    )
+                if was_training:
+                    model.train()
+                for key, value in diag.items():
+                    logger.log_scalar(f"flow/{key}", float(value), step=epoch, split=None)
+
+            if monitor_every > 0 and epoch % monitor_every == 0 and len(val_idx) > 0:
+                n_monitor = min(len(val_idx), monitor_max) if monitor_max > 0 else len(val_idx)
+                if n_monitor > 0:
+                    sample_idx = val_idx.sample(
+                        n=n_monitor, random_state=config.GLOBAL_SEED
+                    ).index
+                    val_idx_sample = val_idx.loc[sample_idx].reset_index(drop=True)
+                    val_df_sample = val_df.loc[sample_idx].reset_index(drop=True)
+
+                    with torch.no_grad():
+                        synth_idx = _sample_conditioned(
+                            model,
+                            val_idx_sample,
+                            conditional_cols,
+                            temperature=float(
+                                getattr(config, "SA_TEMPERATURE", config.SA_SAMPLE_TEMPERATURE)
+                            ),
+                            device=device,
+                        )
+
+                    synth_decoded = transformer.decode(synth_idx)
+                    synth_metrics_df = synth_decoded[config.OUTPUT_COLUMNS].copy()
+                    eval_metrics_df = val_df_sample[config.OUTPUT_COLUMNS].copy()
+
+                    fast_metrics = compute_fast_metrics(
+                        eval_metrics_df,
+                        synth_metrics_df,
+                        do_coverage=bool(
+                            getattr(config, "SA_MONITOR_DO_COVERAGE", False)
+                        ),
+                        coverage_max_samples=int(
+                            getattr(config, "SA_MONITOR_COVERAGE_MAX_SAMPLES", 0) or 0
+                        ),
+                        seed=config.GLOBAL_SEED,
+                    )
+                    logger.log_scalars(fast_metrics, step=epoch, prefix="metrics")
+
             print(
                 f"[Epoch {epoch:03d}] train_nll={train_nll['nll_total']:.4f} "
                 f"val_nll={val_nll['nll_total']:.4f}"
@@ -407,32 +558,43 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             synth_metrics_df = synth_decoded[config.OUTPUT_COLUMNS].copy()
             eval_metrics_df = eval_df_sample[config.OUTPUT_COLUMNS].copy()
 
-            metrics = compute_metrics(
+            metrics: Dict[str, float | str] = compute_metrics(
                 eval_metrics_df,
                 synth_metrics_df,
                 order_key=f"strategy_a_{split_name}",
-                output_dir=output_dir,
+                output_dir=metrics_dir,
                 plot_dir=plot_dir,
             )
             paper_metrics = compute_paper_metrics(train_df, eval_metrics_df, synth_metrics_df)
             metrics.update(paper_metrics)
+            metrics["eval_split"] = split_name
+            metrics["n_train"] = float(len(train_df))
+            metrics["n_eval"] = float(len(eval_metrics_df))
+            metrics["n_synth"] = float(len(synth_metrics_df))
             metrics["best_val"] = float(best_val)
             metrics["train_time_min"] = float(train_time_min)
             metrics["sample_time_min"] = float(sample_time_min)
             metrics["total_time_min"] = float(train_time_min + sample_time_min)
 
-            metrics_path = output_dir / f"metrics_strategy_a_{split_name}.json"
-            if split_name == "val":
-                metrics_path = output_dir / "metrics_strategy_a.json"
+            metrics_path = metrics_dir / f"metrics_strategy_a_{split_name}.json"
             save_metrics_json(metrics, metrics_path)
 
+            if split_name == "val":
+                save_metrics_json(metrics, output_dir / "metrics_strategy_a.json")
+            elif split_name == "hold":
+                save_metrics_json(metrics, output_dir / "metrics_strategy_a_hold.json")
+
+            synth_path = data_dir / f"synthetic_strategy_a_{split_name}.csv"
+            synth_decoded.to_csv(synth_path, index=False)
             if save_synth:
                 synth_decoded.to_csv(
                     output_dir / "synthetic_strategy_a_hold.csv", index=False
                 )
 
             print(f"[Strategy A] metrics saved: {metrics_path}")
+            print(f"[Strategy A] synthetic saved: {synth_path}")
 
+        # Keep val/hold evaluation separate (val for selection, hold for reporting).
         _evaluate_split(split_name="val", eval_df=val_df, eval_idx=val_idx, save_synth=False)
         if len(hold_df) > 0:
             _evaluate_split(

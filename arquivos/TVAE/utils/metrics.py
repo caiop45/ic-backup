@@ -211,6 +211,64 @@ def joint_metrics(
     return metrics
 
 
+def compute_fast_metrics(
+    real_df: pd.DataFrame,
+    synth_df: pd.DataFrame,
+    *,
+    do_coverage: bool = False,
+    coverage_max_samples: int | None = None,
+    coverage_k: int | None = None,
+    coverage_chunk_size: int | None = None,
+    coverage_time_weight: float | None = None,
+    coverage_space_weight: float | None = None,
+    seed: int | None = None,
+) -> Dict[str, float]:
+    """Fast metrics without plotting (marginals + OD/time/joint, optional coverage)."""
+    import config
+
+    metrics: Dict[str, float] = {}
+    metrics["n_real"] = float(len(real_df))
+    metrics["n_synth"] = float(len(synth_df))
+
+    for col in config.OUTPUT_COLUMNS:
+        real_counts = marginal_counts(real_df, col)
+        synth_counts = marginal_counts(synth_df, col)
+        metrics[f"{col}_jsd"] = jsd_counts(real_counts, synth_counts)
+        metrics[f"{col}_chi2"] = chi2_counts(real_counts, synth_counts)
+
+    metrics.update(od_metrics(real_df, synth_df))
+    metrics.update(time_metrics(real_df, synth_df))
+    metrics.update(joint_metrics(real_df, synth_df))
+
+    if do_coverage:
+        metrics["cov_real_synth"] = coverage_score(
+            real_df,
+            synth_df,
+            k=int(coverage_k if coverage_k is not None else config.COVERAGE_K),
+            max_samples=coverage_max_samples
+            if coverage_max_samples is not None
+            else config.COVERAGE_MAX_SAMPLES,
+            seed=int(seed if seed is not None else config.GLOBAL_SEED),
+            chunk_size=int(
+                coverage_chunk_size
+                if coverage_chunk_size is not None
+                else config.COVERAGE_CHUNK_SIZE
+            ),
+            w_time=float(
+                coverage_time_weight
+                if coverage_time_weight is not None
+                else config.COVERAGE_TIME_WEIGHT
+            ),
+            w_space=float(
+                coverage_space_weight
+                if coverage_space_weight is not None
+                else config.COVERAGE_SPACE_WEIGHT
+            ),
+        )
+
+    return metrics
+
+
 def plot_marginal_hist(
     real_counts: pd.Series,
     synth_counts: pd.Series,
@@ -373,6 +431,47 @@ def _pairwise_distance(
     return (w_time * time_dist + w_space * space_dist).astype(np.float32)
 
 
+def distance_matrix(
+    a_df: pd.DataFrame,
+    b_df: pd.DataFrame,
+    *,
+    w_time: float,
+    w_space: float,
+) -> np.ndarray:
+    """Compute the distance matrix between two datasets.
+
+    Distance definition matches coverage_score:
+    - time distance: cyclical day (period=7) + hour (period=24)
+    - space distance: pickup mismatch (0/1) + dropoff mismatch (0/1)
+    - total = w_time * time_dist + w_space * space_dist
+    """
+    if a_df.empty or b_df.empty:
+        return np.zeros((len(a_df), len(b_df)), dtype=np.float32)
+
+    a_day = a_df["dia_da_semana"].to_numpy(dtype=np.int64)
+    a_hour = a_df["hora_do_dia"].to_numpy(dtype=np.int64)
+    a_pickup = a_df["pickup_id"].to_numpy(dtype=np.int64)
+    a_dropoff = a_df["dropoff_id"].to_numpy(dtype=np.int64)
+
+    b_day = b_df["dia_da_semana"].to_numpy(dtype=np.int64)
+    b_hour = b_df["hora_do_dia"].to_numpy(dtype=np.int64)
+    b_pickup = b_df["pickup_id"].to_numpy(dtype=np.int64)
+    b_dropoff = b_df["dropoff_id"].to_numpy(dtype=np.int64)
+
+    return _pairwise_distance(
+        a_day,
+        a_hour,
+        a_pickup,
+        a_dropoff,
+        b_day,
+        b_hour,
+        b_pickup,
+        b_dropoff,
+        w_time=w_time,
+        w_space=w_space,
+    )
+
+
 def _sample_df(df: pd.DataFrame, max_samples: int | None, seed: int) -> pd.DataFrame:
     if max_samples is None or max_samples <= 0 or len(df) <= max_samples:
         return df
@@ -454,3 +553,111 @@ def coverage_score(
         covered += int((min_dist <= radii[start:end]).sum())
 
     return float(100.0 * covered / max(1, n_ref))
+
+
+def dcr_quantile(
+    ref_df: pd.DataFrame,
+    other_df: pd.DataFrame,
+    *,
+    alpha: float,
+    max_samples: int | None,
+    chunk_size: int,
+    seed: int,
+    w_time: float,
+    w_space: float,
+) -> float:
+    """Compute DCR quantile d_alpha between ref_df and other_df.
+
+    DCR (distance to closest record) uses the same distance as coverage_score:
+    cyclical day+hour plus pickup/dropoff mismatch, weighted by w_time/w_space.
+    Sampling is deterministic given the seed.
+    """
+    if ref_df.empty or other_df.empty:
+        return 0.0
+
+    ref_df = _sample_df(ref_df, max_samples, seed)
+    other_df = _sample_df(other_df, max_samples, seed + 1)
+    if ref_df.empty or other_df.empty:
+        return 0.0
+
+    chunk_size = int(max(1, chunk_size))
+    min_dists: List[np.ndarray] = []
+
+    ref_day = ref_df["dia_da_semana"].to_numpy(dtype=np.int64)
+    ref_hour = ref_df["hora_do_dia"].to_numpy(dtype=np.int64)
+    ref_pickup = ref_df["pickup_id"].to_numpy(dtype=np.int64)
+    ref_dropoff = ref_df["dropoff_id"].to_numpy(dtype=np.int64)
+
+    oth_day = other_df["dia_da_semana"].to_numpy(dtype=np.int64)
+    oth_hour = other_df["hora_do_dia"].to_numpy(dtype=np.int64)
+    oth_pickup = other_df["pickup_id"].to_numpy(dtype=np.int64)
+    oth_dropoff = other_df["dropoff_id"].to_numpy(dtype=np.int64)
+
+    n_ref = len(ref_df)
+    n_oth = len(other_df)
+    for start in range(0, n_ref, chunk_size):
+        end = min(n_ref, start + chunk_size)
+        chunk_min = None
+        for j in range(0, n_oth, chunk_size):
+            j_end = min(n_oth, j + chunk_size)
+            dist = _pairwise_distance(
+                ref_day[start:end],
+                ref_hour[start:end],
+                ref_pickup[start:end],
+                ref_dropoff[start:end],
+                oth_day[j:j_end],
+                oth_hour[j:j_end],
+                oth_pickup[j:j_end],
+                oth_dropoff[j:j_end],
+                w_time=w_time,
+                w_space=w_space,
+            )
+            min_chunk = dist.min(axis=1)
+            if chunk_min is None:
+                chunk_min = min_chunk
+            else:
+                chunk_min = np.minimum(chunk_min, min_chunk)
+        if chunk_min is not None:
+            min_dists.append(chunk_min)
+
+    if not min_dists:
+        return 0.0
+    all_min = np.concatenate(min_dists)
+    return float(np.quantile(all_min, alpha))
+
+
+def rdcr(
+    train_df: pd.DataFrame,
+    hold_df: pd.DataFrame,
+    synth_df: pd.DataFrame,
+    *,
+    alpha: float,
+    max_samples: int | None,
+    chunk_size: int,
+    seed: int,
+    w_time: float,
+    w_space: float,
+    eps: float,
+) -> float:
+    """Compute rDCR ratio d_alpha(train,synth) / d_alpha(hold,synth)."""
+    d_tr = dcr_quantile(
+        train_df,
+        synth_df,
+        alpha=alpha,
+        max_samples=max_samples,
+        chunk_size=chunk_size,
+        seed=seed,
+        w_time=w_time,
+        w_space=w_space,
+    )
+    d_hold = dcr_quantile(
+        hold_df,
+        synth_df,
+        alpha=alpha,
+        max_samples=max_samples,
+        chunk_size=chunk_size,
+        seed=seed,
+        w_time=w_time,
+        w_space=w_space,
+    )
+    return float(d_tr / max(d_hold, eps))

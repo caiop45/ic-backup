@@ -245,6 +245,39 @@ class StrategyAModel(nn.Module):
             "nll_total": total,
         }
 
+    def residual_log_prob(
+        self,
+        *,
+        u: Dict[str, torch.Tensor],
+        h_idx: torch.Tensor,
+        o_idx: torch.Tensor,
+        d_idx: torch.Tensor,
+        r: torch.Tensor,
+        return_layer_logdet: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, Dict[str, float]]:
+        """Compute residual flow log-probability with optional layer diagnostics."""
+        u_emb = self._u_embed(u)
+
+        h_idx = _ensure_1d_long(h_idx, "h_idx")
+        o_idx = _ensure_1d_long(o_idx, "o_idx")
+        d_idx = _ensure_1d_long(d_idx, "d_idx")
+        if (
+            u_emb.shape[0] != h_idx.numel()
+            or u_emb.shape[0] != o_idx.numel()
+            or u_emb.shape[0] != d_idx.numel()
+        ):
+            raise ValueError("u, h_idx, o_idx, and d_idx must share the same batch size")
+
+        h_emb = self.time_embedding(h_idx)
+        o_emb = self.origin_embedding(o_idx)
+        d_emb = self.zone_embeddings[d_idx]
+        residual_ctx = self.residual_mlp(torch.cat([u_emb, h_emb, o_emb, d_emb], dim=1))
+
+        r = r.to(dtype=torch.float32)
+        return self.residual_flow.log_prob(
+            r, residual_ctx, return_layer_logdet=return_layer_logdet
+        )
+
     def _sample_from_logits(
         self,
         logits: torch.Tensor,

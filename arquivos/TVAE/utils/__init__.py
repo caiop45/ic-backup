@@ -1,6 +1,10 @@
 from .helpers import set_seed, safe_softmax
 from .metrics import (
+    compute_fast_metrics,
     coverage_score,
+    distance_matrix,
+    dcr_quantile,
+    rdcr,
     graph_similarity_score,
     joint_counts,
     marginal_counts,
@@ -20,7 +24,11 @@ from .serialization import save_mappings, load_mappings, save_checkpoint, load_c
 __all__ = [
     "set_seed",
     "safe_softmax",
+    "compute_fast_metrics",
     "coverage_score",
+    "distance_matrix",
+    "dcr_quantile",
+    "rdcr",
     "graph_similarity_score",
     "joint_counts",
     "marginal_counts",

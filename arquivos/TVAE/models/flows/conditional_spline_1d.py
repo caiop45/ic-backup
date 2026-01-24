@@ -215,7 +215,13 @@ class ConditionalSplineFlow1D(nn.Module):
             total_logabsdet = total_logabsdet + logabsdet
         return z, total_logabsdet
 
-    def log_prob(self, r: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+    def log_prob(
+        self,
+        r: torch.Tensor,
+        context: torch.Tensor,
+        *,
+        return_layer_logdet: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
         if r.dim() != 1:
             raise ValueError("r must be a 1D tensor")
         if context.dim() != 2:
@@ -225,10 +231,32 @@ class ConditionalSplineFlow1D(nn.Module):
 
         r_clamped = r.clamp(self.eps, 1.0 - self.eps)
         inside = torch.isfinite(r) & (r >= self.eps) & (r <= 1.0 - self.eps)
-        _, logabsdet = self.inverse(r_clamped, context)
-        log_prob = logabsdet
-        log_prob = torch.where(inside, log_prob, torch.full_like(log_prob, float("-inf")))
-        return log_prob
+        if not return_layer_logdet:
+            _, logabsdet = self.inverse(r_clamped, context)
+            log_prob = logabsdet
+            log_prob = torch.where(
+                inside, log_prob, torch.full_like(log_prob, float("-inf"))
+            )
+            return log_prob
+
+        z = r_clamped
+        total_logabsdet = torch.zeros_like(z)
+        diagnostics: dict[str, float] = {}
+        for rev_idx, layer in enumerate(reversed(self.layers)):
+            z, logabsdet = layer.inverse(z, context)
+            total_logabsdet = total_logabsdet + logabsdet
+            layer_idx = self.num_layers - 1 - rev_idx
+            diagnostics[f"layer_logdet_mean_{layer_idx}"] = float(
+                logabsdet.mean().item()
+            )
+            diagnostics[f"layer_logdet_std_{layer_idx}"] = float(
+                logabsdet.std(unbiased=False).item()
+            )
+
+        log_prob = torch.where(
+            inside, total_logabsdet, torch.full_like(total_logabsdet, float("-inf"))
+        )
+        return log_prob, diagnostics
 
     def sample(self, context: torch.Tensor, *, seed: int | None = None) -> torch.Tensor:
         if context.dim() != 2:

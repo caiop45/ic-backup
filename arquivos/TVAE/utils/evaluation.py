@@ -10,6 +10,7 @@ import config
 from utils.metrics import (
     chi2_counts,
     coverage_score,
+    dcr_quantile,
     graph_similarity_score,
     joint_metrics,
     jsd_counts,
@@ -72,7 +73,7 @@ def compute_metrics(
 def compute_paper_metrics(
     train_df: pd.DataFrame, test_df: pd.DataFrame, synth_df: pd.DataFrame
 ) -> Dict[str, float]:
-    """Compute paper metrics (W1 time, graph similarity, coverage)."""
+    """Compute paper metrics (W1 time, graph similarity, coverage, DCR/rDCR)."""
     metrics: Dict[str, float] = {}
 
     metrics["w1_tr_te"] = wasserstein_time(
@@ -124,6 +125,38 @@ def compute_paper_metrics(
     metrics["coverage_max_samples"] = float(config.COVERAGE_MAX_SAMPLES or 0)
     metrics["coverage_time_weight"] = float(config.COVERAGE_TIME_WEIGHT)
     metrics["coverage_space_weight"] = float(config.COVERAGE_SPACE_WEIGHT)
+
+    dcr_alpha = float(getattr(config, "DCR_ALPHA", 0.05))
+    dcr_max_samples = getattr(config, "DCR_MAX_SAMPLES", None)
+    dcr_chunk = int(getattr(config, "DCR_CHUNK_SIZE", 1024))
+    dcr_eps = float(getattr(config, "DCR_EPS", 1e-12))
+
+    dcr_tr_syn = dcr_quantile(
+        train_df,
+        synth_df,
+        alpha=dcr_alpha,
+        max_samples=dcr_max_samples,
+        chunk_size=dcr_chunk,
+        seed=config.GLOBAL_SEED,
+        w_time=config.COVERAGE_TIME_WEIGHT,
+        w_space=config.COVERAGE_SPACE_WEIGHT,
+    )
+    dcr_hold_syn = dcr_quantile(
+        test_df,
+        synth_df,
+        alpha=dcr_alpha,
+        max_samples=dcr_max_samples,
+        chunk_size=dcr_chunk,
+        seed=config.GLOBAL_SEED,
+        w_time=config.COVERAGE_TIME_WEIGHT,
+        w_space=config.COVERAGE_SPACE_WEIGHT,
+    )
+    metrics["dcr_tr_syn_p05"] = float(dcr_tr_syn)
+    metrics["dcr_hold_syn_p05"] = float(dcr_hold_syn)
+    metrics["rdcr_p05"] = float(dcr_tr_syn / max(dcr_hold_syn, dcr_eps))
+    metrics["dcr_alpha"] = float(dcr_alpha)
+    metrics["dcr_max_samples"] = float(dcr_max_samples or 0)
+    metrics["dcr_chunk_size"] = float(dcr_chunk)
 
     return metrics
 
