@@ -54,12 +54,13 @@ def _filter_known(df: pd.DataFrame, transformer: StrategyATransformer) -> pd.Dat
 def _tensor_dataset(
     df_idx: pd.DataFrame, conditional_cols: List[str]
 ) -> TensorDataset:
-    h = torch.from_numpy(df_idx["h_idx"].to_numpy(dtype=np.int64))
-    o = torch.from_numpy(df_idx["o_idx"].to_numpy(dtype=np.int64))
-    d = torch.from_numpy(df_idx["d_idx"].to_numpy(dtype=np.int64))
-    r = torch.from_numpy(df_idx["r"].to_numpy(dtype=np.float32))
+    h = torch.from_numpy(df_idx["h_idx"].to_numpy(dtype=np.int64, copy=True))
+    o = torch.from_numpy(df_idx["o_idx"].to_numpy(dtype=np.int64, copy=True))
+    d = torch.from_numpy(df_idx["d_idx"].to_numpy(dtype=np.int64, copy=True))
+    r = torch.from_numpy(df_idx["r"].to_numpy(dtype=np.float32, copy=True))
     u_tensors = [
-        torch.from_numpy(df_idx[col].to_numpy(dtype=np.int64)) for col in conditional_cols
+        torch.from_numpy(df_idx[col].to_numpy(dtype=np.int64, copy=True))
+        for col in conditional_cols
     ]
     return TensorDataset(h, o, d, r, *u_tensors)
 
@@ -150,7 +151,9 @@ def _sample_conditioned(
             end = min(start + batch_size, len(eval_idx))
             batch_df = eval_idx.iloc[start:end]
             u = {
-                col: torch.from_numpy(batch_df[col].to_numpy(dtype=np.int64)).to(device)
+                col: torch.from_numpy(
+                    batch_df[col].to_numpy(dtype=np.int64, copy=True)
+                ).to(device)
                 for col in conditional_cols
             }
             samples = model.sample(

@@ -52,7 +52,9 @@ def _sample_conditioned(
             end = min(start + batch_size, len(eval_idx))
             batch_df = eval_idx.iloc[start:end]
             u = {
-                col: torch.from_numpy(batch_df[col].to_numpy(dtype=np.int64)).to(device)
+                col: torch.from_numpy(
+                    batch_df[col].to_numpy(dtype=np.int64, copy=True)
+                ).to(device)
                 for col in conditional_cols
             }
             batch_seed = None if seed is None else int(seed) + int(start)
