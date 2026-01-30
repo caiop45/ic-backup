@@ -288,6 +288,16 @@ def main() -> None:
             "no rows remained. Check that your dataset uses NYC TLC LocationIDs "
             "and that you loaded the correct polygons file."
         )
+    # Some zone files contain multiple polygons per LocationID (e.g., islands).
+    # Collapse to one geometry per LocationID so distance-based steps have a unique node.
+    dup_mask = gdf[loc_col].duplicated()
+    if dup_mask.any():
+        dup_ids = sorted(gdf.loc[dup_mask, loc_col].astype("int64").unique().tolist())
+        print(
+            f"[WARN] Found {len(dup_ids)} duplicated LocationIDs in zones; "
+            "dissolving to a single geometry per LocationID."
+        )
+        gdf = gdf[[loc_col, "geometry"]].dissolve(by=loc_col, as_index=False)
 
     # 5) Compute adjacency in LocationID space
     if args.adjacency == "rook":

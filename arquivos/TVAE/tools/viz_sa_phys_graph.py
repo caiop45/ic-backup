@@ -30,6 +30,7 @@ Examples:
     --out-dir outputs/phys_viz_debug \
     --adjacency-crs EPSG:3857 \
     --gap-tol 5.0 \
+    --bridge-max-dist 2500 \
     --edge-style both \
     --debug-zone-ids "5,84" \
     --debug-radius-m 2500
@@ -44,6 +45,7 @@ from typing import Iterable, Literal, Mapping, Sequence
 import pandas as pd
 
 from topology.physical_adjacency import (
+    augment_connect_components_by_distance,
     compute_edges_location_id,
     compute_near_miss_edges_location_id,
     find_location_id_col,
@@ -224,6 +226,12 @@ def main() -> None:
         help="Gap tolerance for tolerant queen adjacency (CRS units).",
     )
     ap.add_argument(
+        "--bridge-max-dist",
+        type=float,
+        default=0.0,
+        help="Max distance for component-bridging augmentation (CRS units).",
+    )
+    ap.add_argument(
         "--crs-metric",
         choices=["none", "EPSG:3857"],
         default="EPSG:3857",
@@ -297,8 +305,8 @@ def main() -> None:
     ap.add_argument("--atlas-topk", type=int, default=25)
     ap.add_argument(
         "--atlas-mode",
-        choices=["low_degree", "high_delta", "both"],
-        default="both",
+        choices=["none", "low_degree", "high_delta", "both"],
+        default="none",
     )
     ap.add_argument(
         "--fix-geoms",
@@ -328,6 +336,14 @@ def main() -> None:
     gdf = read_zones(args.zones)
     loc_col = find_location_id_col(gdf)
     gdf = fix_geometries(gdf, mode=args.fix_geoms)
+    dup_mask = gdf[loc_col].duplicated()
+    if dup_mask.any():
+        dup_ids = sorted(gdf.loc[dup_mask, loc_col].astype("int64").unique().tolist())
+        print(
+            f"[WARN] Found {len(dup_ids)} duplicated LocationIDs in zones; "
+            "dissolving to a single geometry per LocationID."
+        )
+        gdf = gdf[[loc_col, "geometry"]].dissolve(by=loc_col, as_index=False)
 
     gdf_adj = gdf if args.adjacency_crs == "none" else gdf.to_crs(args.adjacency_crs)
     gdf_plot = _prepare_plot_gdf(gdf, plot_crs=args.crs_metric)
@@ -336,7 +352,15 @@ def main() -> None:
     if not location_ids:
         raise ValueError("No LocationIDs found in zones file")
 
-    idx_to_location_id = load_idx_to_location_id(Path(args.mappings) if args.mappings else None)
+    mappings_path = Path(args.mappings) if args.mappings else None
+    if mappings_path is not None and not mappings_path.exists():
+        print(f"[ERROR] mappings file not found: {mappings_path}")
+        print(
+            "[HINT] If your edges CSV includes u_location_id/v_location_id, you can omit --mappings. "
+            "Otherwise, use outputs/save_data/strategy_a/mappings_strategy_a.json."
+        )
+        return
+    idx_to_location_id = load_idx_to_location_id(mappings_path)
 
     config = RenderConfig(
         figsize=_parse_figsize(args.figsize),
@@ -352,7 +376,12 @@ def main() -> None:
     )
     edge_style = args.edge_style
     if edge_style is None:
-        edge_style = "both" if gap_tol > 0 else "strict"
+        if gap_tol > 0:
+            edge_style = "both"
+        elif args.bridge_max_dist and args.bridge_max_dist > 0:
+            edge_style = "tolerant"
+        else:
+            edge_style = "strict"
 
     if args.edges:
         edges_single = _extract_edges_from_csv(Path(args.edges), idx_to_location_id)
@@ -424,6 +453,15 @@ def main() -> None:
             prefilter="bbox",
             gap_tol=gap_tol,
         )
+        bridge_edges: list[tuple[int, int, float]] = []
+        edges_queen_final = edges_queen_tol
+        if args.bridge_max_dist and args.bridge_max_dist > 0:
+            edges_queen_final, bridge_edges = augment_connect_components_by_distance(
+                gdf=gdf_adj,
+                loc_col=loc_col,
+                edges_loc=edges_queen_tol,
+                max_dist=float(args.bridge_max_dist),
+            )
     else:
         if args.rook_edges is None or args.queen_edges is None:
             raise ValueError("--rook-edges and --queen-edges are required in load mode")
@@ -443,10 +481,13 @@ def main() -> None:
             if gap_tol > 0
             else edges_queen_strict
         )
+        bridge_edges = []
+        edges_queen_final = edges_queen_tol
 
     degrees_rook = compute_degrees_for_locations(location_ids, edges_rook)
     degrees_queen_strict = compute_degrees_for_locations(location_ids, edges_queen_strict)
     degrees_queen_tol = compute_degrees_for_locations(location_ids, edges_queen_tol)
+    degrees_queen_final = compute_degrees_for_locations(location_ids, edges_queen_final)
     delta = [int(q - r) for q, r in zip(degrees_queen_strict, degrees_rook)]
 
     edges_only_in_queen = sorted(set(edges_queen_strict) - set(edges_rook))
@@ -467,6 +508,7 @@ def main() -> None:
     stats_queen = _stats_text(location_ids, edges_queen_strict, degrees_queen_strict)
     stats_diff = _stats_text(location_ids, edges_only_in_queen, [abs(d) for d in delta])
     stats_queen_tol = _stats_text(location_ids, edges_queen_tol, degrees_queen_tol)
+    stats_queen_final = _stats_text(location_ids, edges_queen_final, degrees_queen_final)
 
     edges_to_draw = edges_rook if args.edge_mode != "none" else None
     render_degree_map(
@@ -485,17 +527,34 @@ def main() -> None:
     )
 
     if edge_style == "tolerant":
-        degree_mode = degrees_queen_tol
-        edges_to_draw = edges_queen_tol if args.edge_mode != "none" else None
+        degree_mode = degrees_queen_final
+        edges_to_draw = edges_queen_final if args.edge_mode != "none" else None
         near_to_draw = None
-        title = "Queen adjacency (tolerant)"
-        stats_text = stats_queen_tol
+        title = (
+            "Queen adjacency (tolerant + bridge)"
+            if bridge_edges
+            else "Queen adjacency (tolerant)"
+        )
+        stats_text = stats_queen_final
+        bridge_to_draw = None
+    elif edge_style == "both":
+        degree_mode = degrees_queen_final
+        edges_to_draw = edges_queen_strict if args.edge_mode != "none" else None
+        near_to_draw = near_miss_pairs if gap_tol > 0 else None
+        title = (
+            "Queen adjacency (strict + near-miss + bridge)"
+            if bridge_edges
+            else "Queen adjacency (strict + near-miss)"
+        )
+        stats_text = stats_queen_final
+        bridge_to_draw = bridge_edges if bridge_edges else None
     else:
         degree_mode = degrees_queen_strict
         edges_to_draw = edges_queen_strict if args.edge_mode != "none" else None
         near_to_draw = near_miss_pairs if gap_tol > 0 else None
         title = "Queen adjacency (strict)"
         stats_text = stats_queen
+        bridge_to_draw = None
 
     render_degree_map(
         gdf_plot,
@@ -504,6 +563,7 @@ def main() -> None:
         degrees=degree_mode,
         edges=edges_to_draw,
         near_miss_edges=near_to_draw,
+        bridge_edges=bridge_to_draw,
         title=title,
         out_path=out_dir / "map_queen.png",
         config=config,
@@ -635,13 +695,13 @@ def main() -> None:
     if args.atlas_mode in ("high_delta", "both"):
         zones = select_problem_zones(
             location_ids,
-            degrees_queen,
+            degrees_queen_strict,
             delta=delta,
             mode="high_delta",
             top_k=int(args.atlas_topk),
         )
         if zones:
-            degrees_map = {int(loc): int(deg) for loc, deg in zip(location_ids, degrees_queen)}
+            degrees_map = {int(loc): int(deg) for loc, deg in zip(location_ids, degrees_queen_strict)}
             render_zone_atlas(
                 gdf_plot,
                 loc_col,

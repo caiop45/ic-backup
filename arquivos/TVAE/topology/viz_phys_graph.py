@@ -246,6 +246,7 @@ def render_degree_map(
     degrees: Sequence[int],
     edges: Iterable[tuple[int, int]] | None,
     near_miss_edges: Iterable[tuple[int, int]] | Iterable[tuple[int, int, float]] | None = None,
+    bridge_edges: Iterable[tuple[int, int]] | Iterable[tuple[int, int, float]] | None = None,
     title: str,
     out_path: Path,
     config: RenderConfig,
@@ -303,6 +304,17 @@ def render_degree_map(
                     linewidth=max(config.edge_width, 0.6),
                     alpha=min(config.edge_alpha + 0.2, 1.0),
                     linestyle="--",
+                )
+        if bridge_edges:
+            bridge_pairs = _near_miss_pairs(bridge_edges)
+            bridge_lines = _build_edge_lines(bridge_pairs, rep_points)
+            if bridge_lines:
+                gpd.GeoSeries(bridge_lines, crs=gdf_plot.crs).plot(
+                    ax=ax,
+                    color="dodgerblue",
+                    linewidth=max(config.edge_width, 0.6),
+                    alpha=min(config.edge_alpha + 0.1, 1.0),
+                    linestyle=":",
                 )
 
     add_basemap(
