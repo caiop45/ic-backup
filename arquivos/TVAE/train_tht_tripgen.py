@@ -80,16 +80,32 @@ def _prepare_loader(
     df_idx: pd.DataFrame,
     conditional_cols: List[str],
     *,
+    device: torch.device,
     batch_size: int,
     shuffle: bool,
 ) -> DataLoader:
+    """Build a DataLoader with CUDA-friendly flags to keep the GPU fed."""
     dataset = _tensor_dataset(df_idx, conditional_cols)
+    use_cuda = device.type == "cuda"
+    num_workers_cfg = int(getattr(config, "THT_NUM_WORKERS", getattr(config, "NUM_WORKERS", 0)))
+    num_workers = num_workers_cfg if use_cuda else 0
+    pin_memory_cfg = bool(getattr(config, "THT_PIN_MEMORY", True))
+    pin_memory = pin_memory_cfg and use_cuda
+    persistent_cfg = bool(getattr(config, "THT_PERSISTENT_WORKERS", True))
+    persistent_workers = persistent_cfg and (num_workers > 0)
+    prefetch_factor = int(getattr(config, "THT_PREFETCH_FACTOR", 2))
+    loader_kwargs: Dict[str, object] = {}
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = persistent_workers
+        loader_kwargs["prefetch_factor"] = prefetch_factor
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         drop_last=False,
-        num_workers=0,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
     )
 
 
@@ -101,13 +117,21 @@ def _epoch_pass(
     *,
     train: bool,
     optimizer: torch.optim.Optimizer | None = None,
+    grad_clip_norm: float = 0.0,
     logger: ExperimentLogger | None = None,
     log_every: int = 0,
     epoch: int | None = None,
     split_name: str = "train",
 ) -> Dict[str, float]:
-    totals = {"nll_h": 0.0, "nll_o": 0.0, "nll_d": 0.0, "nll_r": 0.0, "nll_total": 0.0}
+    totals: Dict[str, torch.Tensor] = {
+        "nll_h": torch.zeros((), device=device),
+        "nll_o": torch.zeros((), device=device),
+        "nll_d": torch.zeros((), device=device),
+        "nll_r": torch.zeros((), device=device),
+        "nll_total": torch.zeros((), device=device),
+    }
     batches = 0
+    non_blocking = device.type == "cuda"
 
     if train:
         model.train()
@@ -116,14 +140,17 @@ def _epoch_pass(
 
     for batch_idx, batch in enumerate(loader, start=1):
         h_idx, o_idx, d_idx, r, *u_vals = batch
-        h_idx = h_idx.to(device)
-        o_idx = o_idx.to(device)
-        d_idx = d_idx.to(device)
-        r = r.to(device)
-        u = {col: u_vals[i].to(device) for i, col in enumerate(conditional_cols)}
+        h_idx = h_idx.to(device, non_blocking=non_blocking)
+        o_idx = o_idx.to(device, non_blocking=non_blocking)
+        d_idx = d_idx.to(device, non_blocking=non_blocking)
+        r = r.to(device, non_blocking=non_blocking)
+        u = {
+            col: u_vals[i].to(device, non_blocking=non_blocking)
+            for i, col in enumerate(conditional_cols)
+        }
 
         if train and optimizer is not None:
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
         with torch.set_grad_enabled(train):
             nll = model.nll(u=u, h_idx=h_idx, o_idx=o_idx, d_idx=d_idx, r=r)
@@ -131,10 +158,12 @@ def _epoch_pass(
 
         if train and optimizer is not None:
             loss.backward()
+            if grad_clip_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
 
         for key in totals:
-            totals[key] += float(nll[key].item())
+            totals[key] += nll[key].detach()
         batches += 1
 
         if (
@@ -146,19 +175,19 @@ def _epoch_pass(
             batch_step = epoch * 1_000_000 + batch_idx
             logger.log_scalars(
                 {
-                    "nll_total": float(nll["nll_total"].item()),
-                    "nll_h": float(nll["nll_h"].item()),
-                    "nll_o": float(nll["nll_o"].item()),
-                    "nll_d": float(nll["nll_d"].item()),
-                    "nll_r": float(nll["nll_r"].item()),
+                    "nll_total": float(nll["nll_total"].detach().item()),
+                    "nll_h": float(nll["nll_h"].detach().item()),
+                    "nll_o": float(nll["nll_o"].detach().item()),
+                    "nll_d": float(nll["nll_d"].detach().item()),
+                    "nll_r": float(nll["nll_r"].detach().item()),
                 },
                 step=batch_step,
                 prefix=f"{split_name}/batch",
             )
 
     if batches == 0:
-        return totals
-    return {key: val / batches for key, val in totals.items()}
+        return {key: 0.0 for key in totals}
+    return {key: (val / batches).item() for key, val in totals.items()}
 
 
 def _grad_norm(model: THTTripGenModel) -> float:
@@ -195,6 +224,7 @@ def _sample_conditioned(
 ) -> pd.DataFrame:
     model.eval()
     outputs: Dict[str, List[np.ndarray]] = {}
+    non_blocking = device.type == "cuda"
 
     with torch.no_grad():
         for start in range(0, len(eval_idx), batch_size):
@@ -203,7 +233,7 @@ def _sample_conditioned(
             u = {
                 col: torch.from_numpy(
                     batch_df[col].to_numpy(dtype=np.int64, copy=True)
-                ).to(device)
+                ).to(device, non_blocking=non_blocking)
                 for col in conditional_cols
             }
             samples = model.sample(
@@ -311,10 +341,18 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
 
         batch_size = int(getattr(config, "THT_BATCH_SIZE", 1024))
         train_loader = _prepare_loader(
-            train_idx, conditional_cols, batch_size=batch_size, shuffle=True
+            train_idx,
+            conditional_cols,
+            device=device,
+            batch_size=batch_size,
+            shuffle=True,
         )
         val_loader = _prepare_loader(
-            val_idx, conditional_cols, batch_size=batch_size, shuffle=False
+            val_idx,
+            conditional_cols,
+            device=device,
+            batch_size=batch_size,
+            shuffle=False,
         )
 
         best_val = float("inf")
@@ -342,6 +380,7 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                 device,
                 train=True,
                 optimizer=optimizer,
+                grad_clip_norm=float(getattr(config, "THT_GRAD_CLIP_NORM", 0.0)),
                 logger=logger if log_every > 0 else None,
                 log_every=log_every,
                 epoch=epoch,
@@ -398,11 +437,15 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
 
             if flow_every > 0 and epoch % flow_every == 0 and diag_batch is not None:
                 h_idx, o_idx, d_idx, r, *u_vals = diag_batch
-                u = {col: u_vals[i].to(device) for i, col in enumerate(conditional_cols)}
-                h_idx = h_idx.to(device)
-                o_idx = o_idx.to(device)
-                d_idx = d_idx.to(device)
-                r = r.to(device)
+                non_blocking = device.type == "cuda"
+                u = {
+                    col: u_vals[i].to(device, non_blocking=non_blocking)
+                    for i, col in enumerate(conditional_cols)
+                }
+                h_idx = h_idx.to(device, non_blocking=non_blocking)
+                o_idx = o_idx.to(device, non_blocking=non_blocking)
+                d_idx = d_idx.to(device, non_blocking=non_blocking)
+                r = r.to(device, non_blocking=non_blocking)
                 was_training = model.training
                 model.eval()
                 with torch.no_grad():
