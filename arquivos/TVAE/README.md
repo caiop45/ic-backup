@@ -1,4 +1,68 @@
-# TVAE
+# Synthetic Trip Generation Pipeline (TVAE + THT-TripGen)
+
+## Quickstart: Fresh Install to Results
+
+Here is a fresh-install, end-to-end pipeline that takes you from raw taxi data to
+experimental comparison outputs (baseline TVAE + THT-TripGen). It is the minimal
+sequence that works on a clean machine.
+
+0) One-time setup (venv + deps)
+
+```bash
+cd /home/rcamargo/vscode-projects/ic-backup/arquivos/TVAE
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+
+# Core deps
+python -m pip install torch numpy pandas pyarrow matplotlib
+
+# Geo deps for physical graph (needed for build_tht_phys_edges_csv)
+python -m pip install geopandas shapely pyproj
+
+# Optional (basemaps + TensorBoard)
+python -m pip install contextily tensorboard
+```
+
+If geopandas fails via pip, install it with conda/mamba instead.
+
+1) Put data in place + set config
+
+- Trips parquet -> `data/viagens_lat_long.parquet`
+- Taxi zones polygons -> `data/taxi_zones.parquet` (or .shp/.zip)
+- Edit `config.py` to set:
+  - `REAL_DATA_PATH`, `DATETIME_COL`, `PICKUP_ID_COL`, `DROPOFF_ID_COL`
+  - time filters (`FILTER_YEAR`, `FILTER_MONTHS`, etc.)
+  - `THT_SPLIT_STRATEGY` (S1 or S2)
+  - `THT_PHYS_EDGES_CSV` path (matches the edge build below)
+
+2) Build physical adjacency edges (required for Ephys/Ecomb)
+
+```bash
+PYTHONPATH=. python tools/build_tht_phys_edges_csv.py \
+  --zones data/taxi_zones.parquet \
+  --out data/topology/tht_phys_edges_S1.csv \
+  --split S1 \
+  --adjacency queen \
+  --gap-tol 5.0 \
+  --bridge-max-dist 2500 \
+  --adjacency-crs EPSG:3857 \
+  --fix-geoms make_valid_if_available
+```
+
+3) Run the full experiment pipeline (baseline + THT-TripGen + metrics + comparison)
+
+```bash
+python tools/run_full_pipeline.py --build-embeddings --device cuda
+```
+
+That command will:
+
+- build Node2Vec embeddings (Efunc/Ephys/Ecomb)
+- train baseline TVAE
+- train THT-TripGen
+- recalc metrics on hold split
+- generate comparison tables + plots
 
 Project for training, sampling, and evaluation of synthetic transportation data. There are two main models:
 
