@@ -14,13 +14,13 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 import config
-from data_processing.strategy_a_loader import load_and_split_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
-from models.strategy_a import StrategyAModel
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
+from models.tht_tripgen import THTTripGenModel
 from utils.evaluation import compute_metrics, compute_paper_metrics
 from utils.experiment_logger import ExperimentLogger
 from utils.metrics import compute_fast_metrics, save_metrics_json
-from utils.serialization import save_checkpoint, save_strategy_a_mappings
+from utils.serialization import save_checkpoint, save_tht_tripgen_mappings
 
 
 class Tee:
@@ -56,7 +56,7 @@ def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
     return metrics_dir, data_dir
 
 
-def _filter_known(df: pd.DataFrame, transformer: StrategyATransformer) -> pd.DataFrame:
+def _filter_known(df: pd.DataFrame, transformer: THTTripGenTransformer) -> pd.DataFrame:
     idx = transformer.transform(df, drop_unknown=False)
     mask = idx.notna().all(axis=1) & idx["r"].notna()
     return df.loc[mask].reset_index(drop=True)
@@ -94,7 +94,7 @@ def _prepare_loader(
 
 
 def _epoch_pass(
-    model: StrategyAModel,
+    model: THTTripGenModel,
     loader: DataLoader,
     conditional_cols: List[str],
     device: torch.device,
@@ -161,7 +161,7 @@ def _epoch_pass(
     return {key: val / batches for key, val in totals.items()}
 
 
-def _grad_norm(model: StrategyAModel) -> float:
+def _grad_norm(model: THTTripGenModel) -> float:
     total = 0.0
     for param in model.parameters():
         if param.grad is None:
@@ -170,7 +170,7 @@ def _grad_norm(model: StrategyAModel) -> float:
     return float(math.sqrt(total))
 
 
-def _param_norm(model: StrategyAModel) -> float:
+def _param_norm(model: THTTripGenModel) -> float:
     total = 0.0
     for param in model.parameters():
         total += float(param.detach().pow(2).sum().item())
@@ -178,14 +178,14 @@ def _param_norm(model: StrategyAModel) -> float:
 
 
 def _eval_sample_size(n_rows: int) -> int:
-    ratio = float(getattr(config, "SA_EVAL_SAMPLE_RATIO", 1.0))
+    ratio = float(getattr(config, "THT_EVAL_SAMPLE_RATIO", 1.0))
     n_eval = int(np.ceil(n_rows * ratio))
     n_eval = max(1, n_eval) if n_rows > 0 else 0
     return min(n_eval, n_rows)
 
 
 def _sample_conditioned(
-    model: StrategyAModel,
+    model: THTTripGenModel,
     eval_idx: pd.DataFrame,
     conditional_cols: List[str],
     *,
@@ -220,7 +220,7 @@ def _sample_conditioned(
 
 
 def _load_zone_embeddings() -> Tuple[torch.Tensor, Path, str]:
-    cache_dir = Path(config.SA_TOPOLOGY_CACHE_DIR)
+    cache_dir = Path(config.THT_TOPOLOGY_CACHE_DIR)
     comb_path = cache_dir / "Ecomb.pt"
     func_path = cache_dir / "Efunc.pt"
     if comb_path.exists():
@@ -238,22 +238,22 @@ def _load_zone_embeddings() -> Tuple[torch.Tensor, Path, str]:
     return embeddings, emb_path, source
 
 
-def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
+def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
     output_dir, log_dir, plot_dir = _run_dirs(run_tag)
     metrics_dir, data_dir = _run_output_subdirs(output_dir)
-    log_path = log_dir / "train_strategy_a.log"
+    log_path = log_dir / "train_tht_tripgen.log"
 
     with log_path.open("w", encoding="utf-8") as fh, contextlib.redirect_stdout(
         Tee(sys.stdout, fh)
     ), ExperimentLogger(output_dir, run_name=run_tag, enable_tb=None) as logger:
-        print(f"[Strategy A] run_tag={run_tag}")
+        print(f"[THT-TripGen] run_tag={run_tag}")
 
-        raw_train_df, raw_val_df, raw_hold_df = load_and_split_strategy_a()
+        raw_train_df, raw_val_df, raw_hold_df = load_and_split_tht_tripgen()
         print(
-            f"[Strategy A] train_rows={len(raw_train_df)} val_rows={len(raw_val_df)} hold_rows={len(raw_hold_df)}"
+            f"[THT-TripGen] train_rows={len(raw_train_df)} val_rows={len(raw_val_df)} hold_rows={len(raw_hold_df)}"
         )
 
-        transformer = StrategyATransformer().fit(raw_train_df)
+        transformer = THTTripGenTransformer().fit(raw_train_df)
         train_df = _filter_known(raw_train_df, transformer)
         val_df = _filter_known(raw_val_df, transformer)
         hold_df = _filter_known(raw_hold_df, transformer)
@@ -270,46 +270,46 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             raise ValueError("Frozen embeddings num_zones mismatch with transformer")
 
         destination_head_type = getattr(
-            config, "SA_DESTINATION_HEAD_TYPE", config.SA_DEST_HEAD_TYPE
+            config, "THT_DESTINATION_HEAD_TYPE", config.THT_DEST_HEAD_TYPE
         )
 
-        model = StrategyAModel(
+        model = THTTripGenModel(
             num_zones=transformer.num_zones,
             num_time_bins=transformer.num_time_bins,
             conditional_cardinalities=cond_card,
             frozen_zone_embeddings=zone_embeddings,
-            cond_emb_dim=int(getattr(config, "SA_COND_EMB_DIM", config.SA_COND_EMB_DIM)),
-            time_emb_dim=int(getattr(config, "SA_TIME_EMB_DIM", config.SA_TIME_EMB_DIM)),
-            origin_emb_dim=int(getattr(config, "SA_ORIGIN_EMB_DIM", config.SA_ORIGIN_EMB_DIM)),
-            context_mlp_hidden=int(getattr(config, "SA_MODEL_HIDDEN", config.SA_MODEL_HIDDEN)),
-            context_mlp_layers=int(getattr(config, "SA_MODEL_LAYERS", config.SA_MODEL_LAYERS)),
-            dropout=float(getattr(config, "SA_MODEL_DROPOUT", config.SA_MODEL_DROPOUT)),
+            cond_emb_dim=int(getattr(config, "THT_COND_EMB_DIM", config.THT_COND_EMB_DIM)),
+            time_emb_dim=int(getattr(config, "THT_TIME_EMB_DIM", config.THT_TIME_EMB_DIM)),
+            origin_emb_dim=int(getattr(config, "THT_ORIGIN_EMB_DIM", config.THT_ORIGIN_EMB_DIM)),
+            context_mlp_hidden=int(getattr(config, "THT_MODEL_HIDDEN", config.THT_MODEL_HIDDEN)),
+            context_mlp_layers=int(getattr(config, "THT_MODEL_LAYERS", config.THT_MODEL_LAYERS)),
+            dropout=float(getattr(config, "THT_MODEL_DROPOUT", config.THT_MODEL_DROPOUT)),
             destination_head_type=str(destination_head_type),
-            min_r_eps=float(getattr(config, "SA_MIN_R_EPS", config.SA_MIN_R_EPS)),
-            residual_num_layers=int(getattr(config, "SA_RESIDUAL_NUM_LAYERS", config.SA_RESIDUAL_NUM_LAYERS)),
-            residual_num_bins=int(getattr(config, "SA_RESIDUAL_NUM_BINS", config.SA_RESIDUAL_NUM_BINS)),
+            min_r_eps=float(getattr(config, "THT_MIN_R_EPS", config.THT_MIN_R_EPS)),
+            residual_num_layers=int(getattr(config, "THT_RESIDUAL_NUM_LAYERS", config.THT_RESIDUAL_NUM_LAYERS)),
+            residual_num_bins=int(getattr(config, "THT_RESIDUAL_NUM_BINS", config.THT_RESIDUAL_NUM_BINS)),
             residual_context_hidden=int(
-                getattr(config, "SA_RESIDUAL_CONTEXT_HIDDEN", config.SA_RESIDUAL_CONTEXT_HIDDEN)
+                getattr(config, "THT_RESIDUAL_CONTEXT_HIDDEN", config.THT_RESIDUAL_CONTEXT_HIDDEN)
             ),
             residual_min_bin_width=float(
-                getattr(config, "SA_RESIDUAL_MIN_BIN_WIDTH", config.SA_RESIDUAL_MIN_BIN_WIDTH)
+                getattr(config, "THT_RESIDUAL_MIN_BIN_WIDTH", config.THT_RESIDUAL_MIN_BIN_WIDTH)
             ),
             residual_min_bin_height=float(
-                getattr(config, "SA_RESIDUAL_MIN_BIN_HEIGHT", config.SA_RESIDUAL_MIN_BIN_HEIGHT)
+                getattr(config, "THT_RESIDUAL_MIN_BIN_HEIGHT", config.THT_RESIDUAL_MIN_BIN_HEIGHT)
             ),
             residual_min_deriv=float(
-                getattr(config, "SA_RESIDUAL_MIN_DERIV", config.SA_RESIDUAL_MIN_DERIV)
+                getattr(config, "THT_RESIDUAL_MIN_DERIV", config.THT_RESIDUAL_MIN_DERIV)
             ),
-            residual_eps=float(getattr(config, "SA_RESIDUAL_EPS", config.SA_RESIDUAL_EPS)),
+            residual_eps=float(getattr(config, "THT_RESIDUAL_EPS", config.THT_RESIDUAL_EPS)),
         ).to(device)
 
         optimizer = torch.optim.Adam(
             model.parameters(),
-            lr=float(getattr(config, "SA_LR", 1e-3)),
-            weight_decay=float(getattr(config, "SA_WEIGHT_DECAY", 0.0)),
+            lr=float(getattr(config, "THT_LR", 1e-3)),
+            weight_decay=float(getattr(config, "THT_WEIGHT_DECAY", 0.0)),
         )
 
-        batch_size = int(getattr(config, "SA_BATCH_SIZE", 1024))
+        batch_size = int(getattr(config, "THT_BATCH_SIZE", 1024))
         train_loader = _prepare_loader(
             train_idx, conditional_cols, batch_size=batch_size, shuffle=True
         )
@@ -323,11 +323,11 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
         loss_rows: List[Dict[str, float]] = []
 
         train_start = time.monotonic()
-        epochs = int(getattr(config, "SA_EPOCHS", 30))
-        log_every = int(getattr(config, "SA_LOG_BATCH_EVERY", 0))
-        flow_every = int(getattr(config, "SA_FLOW_DIAG_EVERY_EPOCHS", 0))
-        monitor_every = int(getattr(config, "SA_MONITOR_METRICS_EVERY_EPOCHS", 0))
-        monitor_max = int(getattr(config, "SA_MONITOR_MAX_SAMPLES", 0))
+        epochs = int(getattr(config, "THT_EPOCHS", 30))
+        log_every = int(getattr(config, "THT_LOG_BATCH_EVERY", 0))
+        flow_every = int(getattr(config, "THT_FLOW_DIAG_EVERY_EPOCHS", 0))
+        monitor_every = int(getattr(config, "THT_MONITOR_METRICS_EVERY_EPOCHS", 0))
+        monitor_max = int(getattr(config, "THT_MONITOR_MAX_SAMPLES", 0))
 
         diag_batch = None
         for batch in val_loader:
@@ -434,7 +434,7 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                             val_idx_sample,
                             conditional_cols,
                             temperature=float(
-                                getattr(config, "SA_TEMPERATURE", config.SA_SAMPLE_TEMPERATURE)
+                                getattr(config, "THT_TEMPERATURE", config.THT_SAMPLE_TEMPERATURE)
                             ),
                             device=device,
                         )
@@ -447,10 +447,10 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                         eval_metrics_df,
                         synth_metrics_df,
                         do_coverage=bool(
-                            getattr(config, "SA_MONITOR_DO_COVERAGE", False)
+                            getattr(config, "THT_MONITOR_DO_COVERAGE", False)
                         ),
                         coverage_max_samples=int(
-                            getattr(config, "SA_MONITOR_COVERAGE_MAX_SAMPLES", 0) or 0
+                            getattr(config, "THT_MONITOR_COVERAGE_MAX_SAMPLES", 0) or 0
                         ),
                         seed=config.GLOBAL_SEED,
                     )
@@ -469,7 +469,7 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                 epochs_no_improve += 1
 
             if epochs_no_improve >= config.PATIENCE:
-                print("[Strategy A] early stopping")
+                print("[THT-TripGen] early stopping")
                 break
 
         train_time_min = (time.monotonic() - train_start) / 60.0
@@ -478,9 +478,9 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             model.load_state_dict(best_state)
 
         loss_df = pd.DataFrame(loss_rows)
-        loss_df.to_csv(output_dir / "loss_strategy_a.csv", index=False)
+        loss_df.to_csv(output_dir / "loss_tht_tripgen.csv", index=False)
 
-        save_strategy_a_mappings(output_dir / "mappings_strategy_a.json", transformer)
+        save_tht_tripgen_mappings(output_dir / "mappings_tht_tripgen.json", transformer)
 
         meta = {
             "num_zones": transformer.num_zones,
@@ -489,32 +489,32 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             "zone_embeddings_source": emb_source,
             "zone_embeddings_dim": int(zone_embeddings.shape[1]),
             "zone_embeddings_path": str(emb_path),
-            "cond_emb_dim": int(getattr(config, "SA_COND_EMB_DIM", config.SA_COND_EMB_DIM)),
-            "time_emb_dim": int(getattr(config, "SA_TIME_EMB_DIM", config.SA_TIME_EMB_DIM)),
-            "origin_emb_dim": int(getattr(config, "SA_ORIGIN_EMB_DIM", config.SA_ORIGIN_EMB_DIM)),
-            "context_mlp_hidden": int(getattr(config, "SA_MODEL_HIDDEN", config.SA_MODEL_HIDDEN)),
-            "context_mlp_layers": int(getattr(config, "SA_MODEL_LAYERS", config.SA_MODEL_LAYERS)),
-            "dropout": float(getattr(config, "SA_MODEL_DROPOUT", config.SA_MODEL_DROPOUT)),
+            "cond_emb_dim": int(getattr(config, "THT_COND_EMB_DIM", config.THT_COND_EMB_DIM)),
+            "time_emb_dim": int(getattr(config, "THT_TIME_EMB_DIM", config.THT_TIME_EMB_DIM)),
+            "origin_emb_dim": int(getattr(config, "THT_ORIGIN_EMB_DIM", config.THT_ORIGIN_EMB_DIM)),
+            "context_mlp_hidden": int(getattr(config, "THT_MODEL_HIDDEN", config.THT_MODEL_HIDDEN)),
+            "context_mlp_layers": int(getattr(config, "THT_MODEL_LAYERS", config.THT_MODEL_LAYERS)),
+            "dropout": float(getattr(config, "THT_MODEL_DROPOUT", config.THT_MODEL_DROPOUT)),
             "destination_head_type": str(destination_head_type),
-            "min_r_eps": float(getattr(config, "SA_MIN_R_EPS", config.SA_MIN_R_EPS)),
-            "residual_num_layers": int(getattr(config, "SA_RESIDUAL_NUM_LAYERS", config.SA_RESIDUAL_NUM_LAYERS)),
-            "residual_num_bins": int(getattr(config, "SA_RESIDUAL_NUM_BINS", config.SA_RESIDUAL_NUM_BINS)),
+            "min_r_eps": float(getattr(config, "THT_MIN_R_EPS", config.THT_MIN_R_EPS)),
+            "residual_num_layers": int(getattr(config, "THT_RESIDUAL_NUM_LAYERS", config.THT_RESIDUAL_NUM_LAYERS)),
+            "residual_num_bins": int(getattr(config, "THT_RESIDUAL_NUM_BINS", config.THT_RESIDUAL_NUM_BINS)),
             "residual_context_hidden": int(
-                getattr(config, "SA_RESIDUAL_CONTEXT_HIDDEN", config.SA_RESIDUAL_CONTEXT_HIDDEN)
+                getattr(config, "THT_RESIDUAL_CONTEXT_HIDDEN", config.THT_RESIDUAL_CONTEXT_HIDDEN)
             ),
             "residual_min_bin_width": float(
-                getattr(config, "SA_RESIDUAL_MIN_BIN_WIDTH", config.SA_RESIDUAL_MIN_BIN_WIDTH)
+                getattr(config, "THT_RESIDUAL_MIN_BIN_WIDTH", config.THT_RESIDUAL_MIN_BIN_WIDTH)
             ),
             "residual_min_bin_height": float(
-                getattr(config, "SA_RESIDUAL_MIN_BIN_HEIGHT", config.SA_RESIDUAL_MIN_BIN_HEIGHT)
+                getattr(config, "THT_RESIDUAL_MIN_BIN_HEIGHT", config.THT_RESIDUAL_MIN_BIN_HEIGHT)
             ),
             "residual_min_deriv": float(
-                getattr(config, "SA_RESIDUAL_MIN_DERIV", config.SA_RESIDUAL_MIN_DERIV)
+                getattr(config, "THT_RESIDUAL_MIN_DERIV", config.THT_RESIDUAL_MIN_DERIV)
             ),
-            "residual_eps": float(getattr(config, "SA_RESIDUAL_EPS", config.SA_RESIDUAL_EPS)),
+            "residual_eps": float(getattr(config, "THT_RESIDUAL_EPS", config.THT_RESIDUAL_EPS)),
         }
 
-        checkpoint_path = output_dir / "strategy_a.pt"
+        checkpoint_path = output_dir / "tht_tripgen.pt"
         save_checkpoint(
             checkpoint_path,
             model_state=model.state_dict(),
@@ -532,7 +532,7 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             save_synth: bool,
         ) -> None:
             if len(eval_idx) == 0:
-                print(f"[Strategy A] skip {split_name}: empty split")
+                print(f"[THT-TripGen] skip {split_name}: empty split")
                 return
 
             n_eval = _eval_sample_size(len(eval_idx))
@@ -549,7 +549,7 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                 model,
                 eval_idx_sample,
                 conditional_cols,
-                temperature=float(getattr(config, "SA_TEMPERATURE", config.SA_SAMPLE_TEMPERATURE)),
+                temperature=float(getattr(config, "THT_TEMPERATURE", config.THT_SAMPLE_TEMPERATURE)),
                 device=device,
             )
             sample_time_min = (time.monotonic() - sample_start) / 60.0
@@ -561,7 +561,7 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             metrics: Dict[str, float | str] = compute_metrics(
                 eval_metrics_df,
                 synth_metrics_df,
-                order_key=f"strategy_a_{split_name}",
+                order_key=f"tht_tripgen_{split_name}",
                 output_dir=metrics_dir,
                 plot_dir=plot_dir,
             )
@@ -576,23 +576,23 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
             metrics["sample_time_min"] = float(sample_time_min)
             metrics["total_time_min"] = float(train_time_min + sample_time_min)
 
-            metrics_path = metrics_dir / f"metrics_strategy_a_{split_name}.json"
+            metrics_path = metrics_dir / f"metrics_tht_tripgen_{split_name}.json"
             save_metrics_json(metrics, metrics_path)
 
             if split_name == "val":
-                save_metrics_json(metrics, output_dir / "metrics_strategy_a.json")
+                save_metrics_json(metrics, output_dir / "metrics_tht_tripgen.json")
             elif split_name == "hold":
-                save_metrics_json(metrics, output_dir / "metrics_strategy_a_hold.json")
+                save_metrics_json(metrics, output_dir / "metrics_tht_tripgen_hold.json")
 
-            synth_path = data_dir / f"synthetic_strategy_a_{split_name}.csv"
+            synth_path = data_dir / f"synthetic_tht_tripgen_{split_name}.csv"
             synth_decoded.to_csv(synth_path, index=False)
             if save_synth:
                 synth_decoded.to_csv(
-                    output_dir / "synthetic_strategy_a_hold.csv", index=False
+                    output_dir / "synthetic_tht_tripgen_hold.csv", index=False
                 )
 
-            print(f"[Strategy A] metrics saved: {metrics_path}")
-            print(f"[Strategy A] synthetic saved: {synth_path}")
+            print(f"[THT-TripGen] metrics saved: {metrics_path}")
+            print(f"[THT-TripGen] synthetic saved: {synth_path}")
 
         # Keep val/hold evaluation separate (val for selection, hold for reporting).
         _evaluate_split(split_name="val", eval_df=val_df, eval_idx=val_idx, save_synth=False)
@@ -604,12 +604,12 @@ def train_strategy_a(*, run_tag: str, device: torch.device) -> None:
                 save_synth=True,
             )
 
-        print(f"[Strategy A] saved checkpoint={checkpoint_path}")
+        print(f"[THT-TripGen] saved checkpoint={checkpoint_path}")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Train Strategy A model")
-    parser.add_argument("--run-tag", default="strategy_a", help="output subdir name")
+    parser = argparse.ArgumentParser(description="Train THT-TripGen model")
+    parser.add_argument("--run-tag", default="tht_tripgen", help="output subdir name")
     parser.add_argument("--device", default=None, help="torch device override")
     args = parser.parse_args()
 
@@ -619,7 +619,7 @@ def main() -> int:
         else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     )
 
-    train_strategy_a(run_tag=args.run_tag, device=device)
+    train_tht_tripgen(run_tag=args.run_tag, device=device)
     return 0
 
 

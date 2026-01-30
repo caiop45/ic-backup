@@ -3,27 +3,27 @@
 
 Examples:
   # Compute rook/queen from polygons (EPSG:4326)
-  python tools/inspect_sa_phys_graph.py \
+  python tools/inspect_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_graph
 
   # Compute in a metric CRS with 5m tol (default)
-  python tools/inspect_sa_phys_graph.py \
+  python tools/inspect_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_graph_metric \
     --crs-metric EPSG:3857
 
   # Load from precomputed edge CSVs
-  python tools/inspect_sa_phys_graph.py \
+  python tools/inspect_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_graph_loaded \
     --mode load \
-    --rook-edges data/sa_phys_edges_rook.csv \
-    --queen-edges data/sa_phys_edges_queen.csv \
+    --rook-edges data/tht_phys_edges_rook.csv \
+    --queen-edges data/tht_phys_edges_queen.csv \
     --mappings data/zone_mappings.json
 
   # Compute tolerant queen adjacency with 5m gap tolerance in EPSG:3857
-  python tools/inspect_sa_phys_graph.py \
+  python tools/inspect_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_graph_tol \
     --crs-metric EPSG:3857 \

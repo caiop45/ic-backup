@@ -3,16 +3,17 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from models.strategy_a import StrategyAModel
+from models.tht_tripgen import THTTripGenModel
 
 
-def test_strategy_a_nll_includes_r():
-    num_zones = 4
-    num_time_bins = 3
-    cond_card = {"dow_idx": 2}
-    zone_emb = torch.randn(num_zones, 6)
+def test_tht_tripgen_model_shapes():
+    num_zones = 5
+    num_time_bins = 4
+    emb_dim = 8
+    cond_card = {"dow_idx": 3}
 
-    model = StrategyAModel(
+    zone_emb = torch.randn(num_zones, emb_dim)
+    model = THTTripGenModel(
         num_zones=num_zones,
         num_time_bins=num_time_bins,
         conditional_cardinalities=cond_card,
@@ -20,24 +21,23 @@ def test_strategy_a_nll_includes_r():
         cond_emb_dim=4,
         time_emb_dim=4,
         origin_emb_dim=4,
-        context_mlp_hidden=8,
+        context_mlp_hidden=16,
         context_mlp_layers=2,
         dropout=0.0,
-        residual_num_layers=2,
-        residual_num_bins=5,
-        residual_context_hidden=8,
-        residual_min_bin_width=1e-2,
-        residual_min_deriv=1e-2,
     )
 
-    batch = 8
+    batch = 6
     u = {"dow_idx": torch.randint(0, cond_card["dow_idx"], (batch,))}
     h_idx = torch.randint(0, num_time_bins, (batch,))
     o_idx = torch.randint(0, num_zones, (batch,))
     d_idx = torch.randint(0, num_zones, (batch,))
-    r = torch.rand(batch) * 0.98 + 0.01
+    r = torch.rand(batch)
+
+    logits = model(u=u, h_idx=h_idx, o_idx=o_idx, d_idx=d_idx)
+
+    assert logits["logits_h"].shape == (batch, num_time_bins)
+    assert logits["logits_o"].shape == (batch, num_zones)
+    assert logits["logits_d"].shape == (batch, num_zones)
 
     nll = model.nll(u=u, h_idx=h_idx, o_idx=o_idx, d_idx=d_idx, r=r)
-    assert "nll_r" in nll
-    assert torch.isfinite(nll["nll_r"]).item()
     assert torch.isfinite(nll["nll_total"]).item()

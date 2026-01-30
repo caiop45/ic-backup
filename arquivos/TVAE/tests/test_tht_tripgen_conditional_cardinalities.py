@@ -1,9 +1,9 @@
 import pandas as pd
 
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 
 
-def test_strategy_a_conditional_cardinalities_keys_match_encoded_columns():
+def test_tht_tripgen_conditional_cardinalities_keys_match_encoded_columns():
     df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2],
@@ -16,7 +16,7 @@ def test_strategy_a_conditional_cardinalities_keys_match_encoded_columns():
         }
     )
 
-    transformer = StrategyATransformer(use_weekend=True, use_month=True).fit(df)
+    transformer = THTTripGenTransformer(use_weekend=True, use_month=True).fit(df)
     encoded = transformer.transform(df)
 
     conditional_keys = set(transformer.conditional_cardinalities.keys())

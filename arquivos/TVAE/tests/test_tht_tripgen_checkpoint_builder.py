@@ -4,21 +4,21 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from utils.serialization import (
-    build_strategy_a_model_from_checkpoint,
+    build_tht_tripgen_model_from_checkpoint,
     save_checkpoint,
     load_checkpoint,
 )
-from models.strategy_a import StrategyAModel
+from models.tht_tripgen import THTTripGenModel
 
 
-def test_strategy_a_checkpoint_build_and_forward(tmp_path):
+def test_tht_tripgen_checkpoint_build_and_forward(tmp_path):
     num_zones = 4
     num_time_bins = 3
     emb_dim = 6
     cond_card = {"dow_idx": 3}
 
     zone_embeddings = torch.randn(num_zones, emb_dim)
-    model = StrategyAModel(
+    model = THTTripGenModel(
         num_zones=num_zones,
         num_time_bins=num_time_bins,
         conditional_cardinalities=cond_card,
@@ -63,7 +63,7 @@ def test_strategy_a_checkpoint_build_and_forward(tmp_path):
         "residual_eps": 1e-6,
     }
 
-    ckpt_path = tmp_path / "strategy_a.pt"
+    ckpt_path = tmp_path / "tht_tripgen.pt"
     save_checkpoint(
         ckpt_path,
         model_state=model.state_dict(),
@@ -74,7 +74,7 @@ def test_strategy_a_checkpoint_build_and_forward(tmp_path):
     )
 
     state = load_checkpoint(ckpt_path)
-    rebuilt = build_strategy_a_model_from_checkpoint(state)
+    rebuilt = build_tht_tripgen_model_from_checkpoint(state)
     rebuilt.load_state_dict(state["model_state"])
 
     batch = 5

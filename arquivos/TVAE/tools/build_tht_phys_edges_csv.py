@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Build SA_PHYS_EDGES_CSV for Strategy A.
+Build THT_PHYS_EDGES_CSV for THT-TripGen.
 
 Output format:
     CSV with columns:
       u_idx, v_idx, u_location_id, v_location_id, edge_type, distance_m
 
 Important:
-    u_idx/v_idx are StrategyATransformer zone indices (NOT raw LocationID).
+    u_idx/v_idx are THTTripGenTransformer zone indices (NOT raw LocationID).
     You can either:
-      1) load Strategy A split and fit StrategyATransformer on TRAIN, or
+      1) load THT-TripGen split and fit THTTripGenTransformer on TRAIN, or
       2) pass a mappings JSON to map LocationID -> idx directly.
 
 Edge types:
@@ -36,8 +36,8 @@ except Exception as e:
     ) from e
 
 import config
-from data_processing.strategy_a_loader import load_and_split_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 
 from topology.physical_adjacency import (
     augment_connect_components_by_distance,
@@ -152,7 +152,7 @@ def _map_edges_to_index_with_metadata(
     if missing:
         print(
             f"[WARN] {len(missing)} LocationIDs were present in the polygons "
-            f"but not in the Strategy A zone vocabulary (train split). "
+            f"but not in the THT-TripGen zone vocabulary (train split). "
             f"Examples: {sorted(list(missing))[:20]}"
         )
 
@@ -195,20 +195,20 @@ def main() -> None:
         "--out",
         type=str,
         required=True,
-        help="Output CSV path for SA physical edges (index space).",
+        help="Output CSV path for THT-TripGen physical edges (index space).",
     )
     ap.add_argument(
         "--mappings",
         type=str,
         default=None,
-        help="Optional JSON mapping for LocationID -> idx (skips Strategy A fit).",
+        help="Optional JSON mapping for LocationID -> idx (skips THT-TripGen fit).",
     )
     ap.add_argument(
         "--split",
         type=str,
         default="S1",
         choices=["S1", "S2"],
-        help="Strategy A split (must match how you'll train/build embeddings).",
+        help="THT-TripGen split (must match how you'll train/build embeddings).",
     )
     ap.add_argument(
         "--adjacency",
@@ -255,9 +255,9 @@ def main() -> None:
 
     zone_to_idx = _load_zone_to_idx(Path(args.mappings)) if args.mappings else None
     if zone_to_idx is None:
-        # 1) Load Strategy A data & fit transformer on TRAIN
-        train_df, _hold_df, _test_df = load_and_split_strategy_a(split=args.split)
-        transformer = StrategyATransformer()
+        # 1) Load THT-TripGen data & fit transformer on TRAIN
+        train_df, _hold_df, _test_df = load_and_split_tht_tripgen(split=args.split)
+        transformer = THTTripGenTransformer()
         transformer.fit(train_df)
 
         zone_to_idx = transformer.zone_to_idx
@@ -280,11 +280,11 @@ def main() -> None:
     if adjacency_crs != "none":
         gdf = gdf.to_crs(adjacency_crs)
 
-    # 4) Filter polygons to the Strategy A vocabulary (so indices line up)
+    # 4) Filter polygons to the THT-TripGen vocabulary (so indices line up)
     gdf = gdf[gdf[loc_col].astype("int64").isin(zone_vocab)].copy()
     if gdf.empty:
         raise RuntimeError(
-            "After filtering polygons to the Strategy A zone vocabulary, "
+            "After filtering polygons to the THT-TripGen zone vocabulary, "
             "no rows remained. Check that your dataset uses NYC TLC LocationIDs "
             "and that you loaded the correct polygons file."
         )

@@ -1,4 +1,4 @@
-"""Shared evaluation metrics for TVAE and Strategy A."""
+"""Shared evaluation metrics for TVAE and THT-TripGen."""
 from __future__ import annotations
 
 from pathlib import Path

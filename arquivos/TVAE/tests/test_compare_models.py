@@ -42,6 +42,6 @@ def test_compare_models_table_columns_order():
     assert list(df.columns) == DEFAULT_COLUMNS
     assert len(df) == 2
     assert df.loc[0, "model"] == "baseline"
-    assert df.loc[1, "model"] == "strategy_a"
+    assert df.loc[1, "model"] == "tht_tripgen"
     assert df.loc[0, "w1_tr_syn"] == baseline_metrics["w1_tr_syn"]
     assert df.loc[1, "cov_te_syn"] == strategy_metrics["cov_te_syn"]

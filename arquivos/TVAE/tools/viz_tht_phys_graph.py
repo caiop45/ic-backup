@@ -3,29 +3,29 @@
 
 Examples:
   # (a) Compute rook + queen + diff from polygons
-  python tools/viz_sa_phys_graph.py \
+  python tools/viz_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_viz
 
   # (b) Load rook/queen edges from CSVs
-  python tools/viz_sa_phys_graph.py \
+  python tools/viz_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_viz_loaded \
     --mode load \
-    --rook-edges data/sa_phys_edges_rook.csv \
-    --queen-edges data/sa_phys_edges_queen.csv \
+    --rook-edges data/tht_phys_edges_rook.csv \
+    --queen-edges data/tht_phys_edges_queen.csv \
     --mappings data/zone_mappings.json
 
   # (c) Render a single graph from an edges CSV
-  python tools/viz_sa_phys_graph.py \
+  python tools/viz_tht_phys_graph.py \
     --zones data/taxi_zones.zip \
     --out-dir outputs/phys_viz_single \
-    --edges data/sa_phys_edges_rook.csv \
+    --edges data/tht_phys_edges_rook.csv \
     --adjacency rook \
     --mappings data/zone_mappings.json
 
   # (d) Debug strict vs near-miss adjacency with gap tolerance
-  python tools/viz_sa_phys_graph.py \
+  python tools/viz_tht_phys_graph.py \
     --zones data/taxi_zones.parquet \
     --out-dir outputs/phys_viz_debug \
     --adjacency-crs EPSG:3857 \
@@ -357,7 +357,7 @@ def main() -> None:
         print(f"[ERROR] mappings file not found: {mappings_path}")
         print(
             "[HINT] If your edges CSV includes u_location_id/v_location_id, you can omit --mappings. "
-            "Otherwise, use outputs/save_data/strategy_a/mappings_strategy_a.json."
+            "Otherwise, use outputs/save_data/tht_tripgen/mappings_tht_tripgen.json."
         )
         return
     idx_to_location_id = load_idx_to_location_id(mappings_path)

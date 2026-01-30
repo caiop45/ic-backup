@@ -1,4 +1,4 @@
-from .strategy_a import StrategyAModel
+from .tht_tripgen import THTTripGenModel
 from .tvae_ar import TVAEAutoregressive
 
-__all__ = ["TVAEAutoregressive", "StrategyAModel"]
+__all__ = ["TVAEAutoregressive", "THTTripGenModel"]

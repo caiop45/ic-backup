@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_processing.strategy_a_loader import _compute_h_and_r
+from data_processing.tht_tripgen_loader import _compute_h_and_r
 
 
 def test_compute_h_and_r_hierarchical_time():

@@ -6,25 +6,25 @@ from typing import Any, Dict, Tuple, TypedDict, NotRequired
 
 import torch
 
-from data_processing.strategy_a_transformer import (
-    StrategyATransformer,
-    StrategyATransformerState,
+from data_processing.tht_tripgen_transformer import (
+    THTTripGenTransformer,
+    THTTripGenTransformerState,
 )
 from data_processing.transformer import CategoricalTransformer, TransformerState
-from models.strategy_a import StrategyAModel
+from models.tht_tripgen import THTTripGenModel
 import config
 
 
-# Strategy A artifact filenames for run directories.
-STRATEGY_A_CHECKPOINT_FILENAME = "strategy_a.pt"
-STRATEGY_A_MAPPINGS_FILENAME = "mappings_strategy_a.json"
-STRATEGY_A_METRICS_FILENAME = "metrics_strategy_a.json"
-STRATEGY_A_METRICS_HOLD_FILENAME = "metrics_strategy_a_hold.json"
-STRATEGY_A_LOSS_FILENAME = "loss_strategy_a.csv"
-STRATEGY_A_SYNTHETIC_HOLD_FILENAME = "synthetic_strategy_a_hold.csv"
+# THT-TripGen artifact filenames for run directories.
+THT_TRIPGEN_CHECKPOINT_FILENAME = "tht_tripgen.pt"
+THT_TRIPGEN_MAPPINGS_FILENAME = "mappings_tht_tripgen.json"
+THT_TRIPGEN_METRICS_FILENAME = "metrics_tht_tripgen.json"
+THT_TRIPGEN_METRICS_HOLD_FILENAME = "metrics_tht_tripgen_hold.json"
+THT_TRIPGEN_LOSS_FILENAME = "loss_tht_tripgen.csv"
+THT_TRIPGEN_SYNTHETIC_HOLD_FILENAME = "synthetic_tht_tripgen_hold.csv"
 
 
-class StrategyACheckpointMeta(TypedDict):
+class THTTripGenCheckpointMeta(TypedDict):
     num_zones: int
     num_time_bins: int
     conditional_cardinalities: Dict[str, int]
@@ -69,8 +69,8 @@ def load_mappings(path: str | Path) -> CategoricalTransformer:
     return transformer
 
 
-def save_strategy_a_mappings(
-    path: str | Path, transformer: StrategyATransformer
+def save_tht_tripgen_mappings(
+    path: str | Path, transformer: THTTripGenTransformer
 ) -> None:
     state = transformer.state_dict()
     payload = {
@@ -87,10 +87,10 @@ def save_strategy_a_mappings(
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
 
 
-def load_strategy_a_mappings(path: str | Path) -> StrategyATransformer:
+def load_tht_tripgen_mappings(path: str | Path) -> THTTripGenTransformer:
     path = Path(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    state = StrategyATransformerState(
+    state = THTTripGenTransformerState(
         zone_categories=payload["zone_categories"],
         time_categories=payload["time_categories"],
         conditional_categories=payload["conditional_categories"],
@@ -99,7 +99,7 @@ def load_strategy_a_mappings(path: str | Path) -> StrategyATransformer:
         use_weekend=payload["use_weekend"],
         use_month=payload["use_month"],
     )
-    transformer = StrategyATransformer(
+    transformer = THTTripGenTransformer(
         min_r_eps=state.min_r_eps,
         use_weekend=state.use_weekend,
         use_month=state.use_month,
@@ -147,19 +147,19 @@ def build_model_from_checkpoint(state: Dict[str, Any]):
     return model
 
 
-def build_strategy_a_model_from_checkpoint(state: Dict[str, Any]) -> StrategyAModel:
+def build_tht_tripgen_model_from_checkpoint(state: Dict[str, Any]) -> THTTripGenModel:
     meta = state.get("meta")
     if meta is None:
-        raise ValueError("Checkpoint state missing meta for Strategy A")
+        raise ValueError("Checkpoint state missing meta for THT-TripGen")
 
     conditional_cardinalities = meta.get("conditional_cardinalities")
     if conditional_cardinalities is None:
-        raise ValueError("meta.conditional_cardinalities is required for Strategy A")
+        raise ValueError("meta.conditional_cardinalities is required for THT-TripGen")
 
     num_zones = meta.get("num_zones")
     num_time_bins = meta.get("num_time_bins")
     if num_zones is None or num_time_bins is None:
-        raise ValueError("meta.num_zones and meta.num_time_bins are required for Strategy A")
+        raise ValueError("meta.num_zones and meta.num_time_bins are required for THT-TripGen")
 
     model_state = state.get("model_state", {})
     zone_embeddings = None
@@ -188,41 +188,41 @@ def build_strategy_a_model_from_checkpoint(state: Dict[str, Any]) -> StrategyAMo
         value = meta.get(key)
         return default if value is None else value
 
-    model = StrategyAModel(
+    model = THTTripGenModel(
         num_zones=int(num_zones),
         num_time_bins=int(num_time_bins),
         conditional_cardinalities={
             str(k): int(v) for k, v in conditional_cardinalities.items()
         },
         frozen_zone_embeddings=zone_embeddings,
-        cond_emb_dim=int(_meta_or_default("cond_emb_dim", config.SA_COND_EMB_DIM)),
-        time_emb_dim=int(_meta_or_default("time_emb_dim", config.SA_TIME_EMB_DIM)),
-        origin_emb_dim=int(_meta_or_default("origin_emb_dim", config.SA_ORIGIN_EMB_DIM)),
-        context_mlp_hidden=int(_meta_or_default("context_mlp_hidden", config.SA_MODEL_HIDDEN)),
-        context_mlp_layers=int(_meta_or_default("context_mlp_layers", config.SA_MODEL_LAYERS)),
-        dropout=float(_meta_or_default("dropout", config.SA_MODEL_DROPOUT)),
+        cond_emb_dim=int(_meta_or_default("cond_emb_dim", config.THT_COND_EMB_DIM)),
+        time_emb_dim=int(_meta_or_default("time_emb_dim", config.THT_TIME_EMB_DIM)),
+        origin_emb_dim=int(_meta_or_default("origin_emb_dim", config.THT_ORIGIN_EMB_DIM)),
+        context_mlp_hidden=int(_meta_or_default("context_mlp_hidden", config.THT_MODEL_HIDDEN)),
+        context_mlp_layers=int(_meta_or_default("context_mlp_layers", config.THT_MODEL_LAYERS)),
+        dropout=float(_meta_or_default("dropout", config.THT_MODEL_DROPOUT)),
         destination_head_type=str(
-            _meta_or_default("destination_head_type", config.SA_DEST_HEAD_TYPE)
+            _meta_or_default("destination_head_type", config.THT_DEST_HEAD_TYPE)
         ),
-        min_r_eps=float(_meta_or_default("min_r_eps", config.SA_MIN_R_EPS)),
+        min_r_eps=float(_meta_or_default("min_r_eps", config.THT_MIN_R_EPS)),
         residual_num_layers=int(
-            _meta_or_default("residual_num_layers", config.SA_RESIDUAL_NUM_LAYERS)
+            _meta_or_default("residual_num_layers", config.THT_RESIDUAL_NUM_LAYERS)
         ),
         residual_num_bins=int(
-            _meta_or_default("residual_num_bins", config.SA_RESIDUAL_NUM_BINS)
+            _meta_or_default("residual_num_bins", config.THT_RESIDUAL_NUM_BINS)
         ),
         residual_context_hidden=int(
-            _meta_or_default("residual_context_hidden", config.SA_RESIDUAL_CONTEXT_HIDDEN)
+            _meta_or_default("residual_context_hidden", config.THT_RESIDUAL_CONTEXT_HIDDEN)
         ),
         residual_min_bin_width=float(
-            _meta_or_default("residual_min_bin_width", config.SA_RESIDUAL_MIN_BIN_WIDTH)
+            _meta_or_default("residual_min_bin_width", config.THT_RESIDUAL_MIN_BIN_WIDTH)
         ),
         residual_min_bin_height=float(
-            _meta_or_default("residual_min_bin_height", config.SA_RESIDUAL_MIN_BIN_HEIGHT)
+            _meta_or_default("residual_min_bin_height", config.THT_RESIDUAL_MIN_BIN_HEIGHT)
         ),
         residual_min_deriv=float(
-            _meta_or_default("residual_min_deriv", config.SA_RESIDUAL_MIN_DERIV)
+            _meta_or_default("residual_min_deriv", config.THT_RESIDUAL_MIN_DERIV)
         ),
-        residual_eps=float(_meta_or_default("residual_eps", config.SA_RESIDUAL_EPS)),
+        residual_eps=float(_meta_or_default("residual_eps", config.THT_RESIDUAL_EPS)),
     )
     return model

@@ -10,10 +10,10 @@ import pandas as pd
 
 from shapely.geometry import Polygon
 
-from tools.inspect_sa_phys_graph import inspect_physical_graphs
+from tools.inspect_tht_phys_graph import inspect_physical_graphs
 
 
-def test_inspect_sa_phys_graph_smoke(tmp_path):
+def test_inspect_tht_phys_graph_smoke(tmp_path):
     polygons = [
         Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
         Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),
@@ -72,7 +72,7 @@ def test_inspect_sa_phys_graph_smoke(tmp_path):
         assert key in stats
 
 
-def test_inspect_sa_phys_graph_gap_tol_near_miss(tmp_path):
+def test_inspect_tht_phys_graph_gap_tol_near_miss(tmp_path):
     polygons = [
         Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
         Polygon([(1.05, 0), (2.05, 0), (2.05, 1), (1.05, 1)]),

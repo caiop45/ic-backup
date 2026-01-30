@@ -1,10 +1,10 @@
 import pandas as pd
 import pandas.testing as pdt
 
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 
 
-def test_strategy_a_transformer_decode_roundtrip():
+def test_tht_tripgen_transformer_decode_roundtrip():
     df = pd.DataFrame(
         {
             "hora_do_dia": [5, 10, 15],
@@ -15,7 +15,7 @@ def test_strategy_a_transformer_decode_roundtrip():
         }
     )
 
-    transformer = StrategyATransformer().fit(df)
+    transformer = THTTripGenTransformer().fit(df)
     encoded = transformer.transform(df)
     decoded = transformer.decode(encoded)
 

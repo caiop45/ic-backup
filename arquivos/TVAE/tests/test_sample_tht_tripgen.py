@@ -4,15 +4,15 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from models.strategy_a import StrategyAModel
-from utils.serialization import save_checkpoint, save_strategy_a_mappings
+from models.tht_tripgen import THTTripGenModel
+from utils.serialization import save_checkpoint, save_tht_tripgen_mappings
 
 import config
-import sample_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
+import sample_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 
 
-def test_sample_strategy_a_outputs_csv(tmp_path, monkeypatch):
+def test_sample_tht_tripgen_outputs_csv(tmp_path, monkeypatch):
     df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2, 3],
@@ -27,18 +27,18 @@ def test_sample_strategy_a_outputs_csv(tmp_path, monkeypatch):
     hold_df = df.iloc[:2].reset_index(drop=True)
 
     monkeypatch.setattr(
-        sample_strategy_a, "load_and_split_strategy_a", lambda: (train_df, val_df, hold_df)
+        sample_tht_tripgen, "load_and_split_tht_tripgen", lambda: (train_df, val_df, hold_df)
     )
 
-    transformer = StrategyATransformer().fit(train_df)
+    transformer = THTTripGenTransformer().fit(train_df)
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
-    save_strategy_a_mappings(run_dir / "mappings_strategy_a.json", transformer)
+    save_tht_tripgen_mappings(run_dir / "mappings_tht_tripgen.json", transformer)
 
     zone_embeddings = torch.randn(transformer.num_zones, 6)
     cond_card = transformer.conditional_idx_cardinalities
 
-    model = StrategyAModel(
+    model = THTTripGenModel(
         num_zones=transformer.num_zones,
         num_time_bins=transformer.num_time_bins,
         conditional_cardinalities=cond_card,
@@ -84,7 +84,7 @@ def test_sample_strategy_a_outputs_csv(tmp_path, monkeypatch):
     }
 
     save_checkpoint(
-        run_dir / "strategy_a.pt",
+        run_dir / "tht_tripgen.pt",
         model_state=model.state_dict(),
         meta=meta,
         optimizer_state=None,
@@ -92,7 +92,7 @@ def test_sample_strategy_a_outputs_csv(tmp_path, monkeypatch):
         metrics=None,
     )
 
-    out_path = sample_strategy_a.sample_strategy_a(
+    out_path = sample_tht_tripgen.sample_tht_tripgen(
         run_dir=run_dir,
         split="val",
         rows=1,

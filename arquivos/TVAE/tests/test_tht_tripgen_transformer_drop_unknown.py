@@ -1,9 +1,9 @@
 import pandas as pd
 
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 
 
-def test_strategy_a_transformer_drop_unknown():
+def test_tht_tripgen_transformer_drop_unknown():
     train_df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1],
@@ -23,7 +23,7 @@ def test_strategy_a_transformer_drop_unknown():
         }
     )
 
-    transformer = StrategyATransformer().fit(train_df)
+    transformer = THTTripGenTransformer().fit(train_df)
     encoded = transformer.transform(val_df, drop_unknown=True)
 
     assert len(encoded) == 1

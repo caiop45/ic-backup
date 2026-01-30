@@ -14,14 +14,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import config
-import train_strategy_a
+import train_tht_tripgen
 import train_tvae
 from tools import compare_models, plot_training_curves
 from utils.helpers import set_seed
 
 import recalc_metrics_hold
-import recalc_metrics_strategy_a_hold
-import tools.build_zone_embeddings as build_zone_embeddings
+import recalc_metrics_tht_tripgen_hold
+import tools.build_tht_zone_embeddings as build_tht_zone_embeddings
 
 
 def _timestamp_tag(prefix: str) -> str:
@@ -60,7 +60,7 @@ def _call_main(module, argv: list[str]) -> None:
 
 
 def _ensure_embeddings(build: bool, device: str | None) -> None:
-    cache_dir = Path(config.SA_TOPOLOGY_CACHE_DIR)
+    cache_dir = Path(config.THT_TOPOLOGY_CACHE_DIR)
     comb_path = cache_dir / "Ecomb.pt"
     func_path = cache_dir / "Efunc.pt"
     if comb_path.exists() or func_path.exists():
@@ -70,8 +70,8 @@ def _ensure_embeddings(build: bool, device: str | None) -> None:
         raise RuntimeError(
             "Zone embeddings missing. Re-run with --build-embeddings or create Efunc.pt/Ecomb.pt."
         )
-    args = ["build_zone_embeddings.py", "--device", device or "cpu"]
-    _call_main(build_zone_embeddings, args)
+    args = ["build_tht_zone_embeddings.py", "--device", device or "cpu"]
+    _call_main(build_tht_zone_embeddings, args)
 
 
 def _maybe_train_tvae(run_dir: Path, force_train: bool) -> None:
@@ -92,15 +92,15 @@ def _maybe_train_tvae(run_dir: Path, force_train: bool) -> None:
         _restore_config(backup)
 
 
-def _maybe_train_strategy(run_dir: Path, force_train: bool, device: torch.device) -> None:
-    checkpoint = run_dir / "strategy_a.pt"
+def _maybe_train_tht_tripgen(run_dir: Path, force_train: bool, device: torch.device) -> None:
+    checkpoint = run_dir / "tht_tripgen.pt"
     if checkpoint.exists() and not force_train:
-        print(f"[Pipeline] strategy reuse: {run_dir}")
+        print(f"[Pipeline] THT-TripGen reuse: {run_dir}")
         return
-    print(f"[Pipeline] training Strategy A -> {run_dir}")
+    print(f"[Pipeline] training THT-TripGen -> {run_dir}")
     backup = _override_config({"SAVE_DATA_DIR": str(run_dir.parent)})
     try:
-        train_strategy_a.train_strategy_a(run_tag=run_dir.name, device=device)
+        train_tht_tripgen.train_tht_tripgen(run_tag=run_dir.name, device=device)
     finally:
         _restore_config(backup)
 
@@ -119,25 +119,25 @@ def _recalc_baseline(run_dir: Path, force_sample: bool) -> None:
     _call_main(recalc_metrics_hold, args)
 
 
-def _recalc_strategy(run_dir: Path, force_sample: bool) -> None:
+def _recalc_tht_tripgen(run_dir: Path, force_sample: bool) -> None:
     args = [
-        "recalc_metrics_strategy_a_hold.py",
+        "recalc_metrics_tht_tripgen_hold.py",
         "--run-dir",
         str(run_dir),
         "--no-plots",
     ]
     if force_sample:
         args.append("--force-sample")
-    _call_main(recalc_metrics_strategy_a_hold, args)
+    _call_main(recalc_metrics_tht_tripgen_hold, args)
 
 
-def _compare_runs(baseline_dir: Path, strategy_dir: Path, out_dir: Path) -> None:
+def _compare_runs(baseline_dir: Path, tht_tripgen_dir: Path, out_dir: Path) -> None:
     args = [
         "compare_models.py",
         "--baseline-run",
         str(baseline_dir),
-        "--strategy-a-run",
-        str(strategy_dir),
+        "--tht-tripgen-run",
+        str(tht_tripgen_dir),
         "--out-dir",
         str(out_dir),
     ]
@@ -156,9 +156,16 @@ def _plot_curves(run_dir: Path, out_dir: Path, label: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run full TVAE + Strategy A pipeline")
+    parser = argparse.ArgumentParser(description="Run full TVAE + THT-TripGen pipeline")
     parser.add_argument("--baseline-run-dir", type=Path, default=None)
-    parser.add_argument("--strategy-run-dir", type=Path, default=None)
+    parser.add_argument(
+        "--tht-tripgen-run-dir",
+        "--strategy-run-dir",
+        dest="tht_tripgen_run_dir",
+        type=Path,
+        default=None,
+        help="THT-TripGen run directory (alias: --strategy-run-dir)",
+    )
     parser.add_argument("--force-train", action="store_true")
     parser.add_argument("--force-sample", action="store_true")
     parser.add_argument("--build-embeddings", action="store_true")
@@ -172,9 +179,9 @@ def main() -> int:
         str(args.baseline_run_dir) if args.baseline_run_dir is not None else None,
         "baseline",
     )
-    strategy_dir = _resolve_run_dir(
-        str(args.strategy_run_dir) if args.strategy_run_dir is not None else None,
-        "strategy_a",
+    tht_tripgen_dir = _resolve_run_dir(
+        str(args.tht_tripgen_run_dir) if args.tht_tripgen_run_dir is not None else None,
+        "tht_tripgen",
     )
 
     comparison_dir = (
@@ -195,15 +202,15 @@ def main() -> int:
     _ensure_embeddings(args.build_embeddings, str(device))
 
     _maybe_train_tvae(baseline_dir, args.force_train)
-    _maybe_train_strategy(strategy_dir, args.force_train, device)
+    _maybe_train_tht_tripgen(tht_tripgen_dir, args.force_train, device)
 
     _recalc_baseline(baseline_dir, args.force_sample)
-    _recalc_strategy(strategy_dir, args.force_sample)
+    _recalc_tht_tripgen(tht_tripgen_dir, args.force_sample)
 
-    _compare_runs(baseline_dir, strategy_dir, comparison_dir)
+    _compare_runs(baseline_dir, tht_tripgen_dir, comparison_dir)
 
     _plot_curves(baseline_dir, plots_dir, "baseline")
-    _plot_curves(strategy_dir, plots_dir, "strategy_a")
+    _plot_curves(tht_tripgen_dir, plots_dir, "tht_tripgen")
 
     print(f"[Pipeline] comparison outputs -> {comparison_dir}")
     return 0

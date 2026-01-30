@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Visualize Strategy A functional graph (directed + weighted).
+"""Visualize THT-TripGen functional graph (directed + weighted).
 
 Examples:
   # Basic functional graph for full train split (top-k per origin)
-  python tools/viz_sa_func_graph.py \
+  python tools/viz_tht_func_graph.py \
     --zones data/taxi_zones.parquet \
     --out-dir outputs/func_viz
 
   # Time-of-day slice (hour bin 8) with weight threshold
-  python tools/viz_sa_func_graph.py \
+  python tools/viz_tht_func_graph.py \
     --zones data/taxi_zones.parquet \
     --out-dir outputs/func_viz_hour8 \
     --hour 8 \
     --min-weight 0.7
 
-  # Use mappings from trained Strategy A run
-  python tools/viz_sa_func_graph.py \
+  # Use mappings from trained THT-TripGen run
+  python tools/viz_tht_func_graph.py \
     --zones data/taxi_zones.parquet \
     --out-dir outputs/func_viz \
-    --mappings outputs/save_data/strategy_a/mappings_strategy_a.json
+    --mappings outputs/save_data/tht_tripgen/mappings_tht_tripgen.json
 """
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ from typing import Iterable, Mapping, Sequence
 import pandas as pd
 
 import config
-from data_processing.strategy_a_loader import load_and_split_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from topology.graphs import build_functional_graph
 from topology.physical_adjacency import find_location_id_col, fix_geometries, read_zones
 from topology.viz_phys_graph import RenderConfig, add_basemap
@@ -264,7 +264,7 @@ def main() -> None:
         "--split",
         choices=["S1", "S2"],
         default=None,
-        help="Strategy A split (defaults to config.SA_SPLIT_STRATEGY)",
+        help="THT-TripGen split (defaults to config.THT_SPLIT_STRATEGY)",
     )
     ap.add_argument(
         "--mappings",
@@ -276,7 +276,7 @@ def main() -> None:
         "--top-k",
         type=int,
         default=None,
-        help="Top-K destinations per origin (defaults to config.SA_GFUNC_TOPK)",
+        help="Top-K destinations per origin (defaults to config.THT_GFUNC_TOPK)",
     )
     ap.add_argument(
         "--weight-mode",
@@ -385,24 +385,24 @@ def main() -> None:
     if mappings_path is not None and not mappings_path.exists():
         print(f"[ERROR] mappings file not found: {mappings_path}")
         print(
-            "[HINT] Use outputs/save_data/strategy_a/mappings_strategy_a.json or omit --mappings "
+            "[HINT] Use outputs/save_data/tht_tripgen/mappings_tht_tripgen.json or omit --mappings "
             "to fit the transformer on the train split."
         )
         return
 
     zone_to_idx = _load_zone_to_idx(mappings_path) if mappings_path else None
 
-    train_df, _val_df, _hold_df = load_and_split_strategy_a(
+    train_df, _val_df, _hold_df = load_and_split_tht_tripgen(
         split=args.split
     )
     transformer = None
     if zone_to_idx is None:
-        transformer = StrategyATransformer().fit(train_df)
+        transformer = THTTripGenTransformer().fit(train_df)
         zone_to_idx = transformer.zone_to_idx
 
     idx_to_loc = {idx: loc for loc, idx in zone_to_idx.items()}
 
-    max_h = int(config.SA_TIME_BINS_H)
+    max_h = int(config.THT_TIME_BINS_H)
     hours = _parse_hours(args.hour, args.hours, args.hour_range, max_h=max_h)
     if hours is not None:
         before = len(train_df)
@@ -422,7 +422,7 @@ def main() -> None:
     if num_nodes <= 0:
         raise ValueError("No zones found in mapping")
 
-    top_k = int(args.top_k) if args.top_k is not None else int(config.SA_GFUNC_TOPK)
+    top_k = int(args.top_k) if args.top_k is not None else int(config.THT_GFUNC_TOPK)
     gfunc = build_functional_graph(
         train_idx,
         num_nodes=num_nodes,

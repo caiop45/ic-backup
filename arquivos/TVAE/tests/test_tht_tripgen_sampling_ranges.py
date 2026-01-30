@@ -3,17 +3,17 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from models.strategy_a import StrategyAModel
+from models.tht_tripgen import THTTripGenModel
 
 
-def test_strategy_a_sampling_ranges():
+def test_tht_tripgen_sampling_ranges():
     num_zones = 6
     num_time_bins = 3
     emb_dim = 8
     cond_card = {"dow_idx": 4}
 
     zone_emb = torch.randn(num_zones, emb_dim)
-    model = StrategyAModel(
+    model = THTTripGenModel(
         num_zones=num_zones,
         num_time_bins=num_time_bins,
         conditional_cardinalities=cond_card,

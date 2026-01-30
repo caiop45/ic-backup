@@ -7,10 +7,10 @@ import pytest
 torch = pytest.importorskip("torch")
 
 import config
-import train_strategy_a
+import train_tht_tripgen
 
 
-def test_train_strategy_a_logging(tmp_path, monkeypatch):
+def test_train_tht_tripgen_logging(tmp_path, monkeypatch):
     df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2, 3],
@@ -25,7 +25,7 @@ def test_train_strategy_a_logging(tmp_path, monkeypatch):
     hold_df = df.iloc[:2].reset_index(drop=True)
 
     monkeypatch.setattr(
-        train_strategy_a, "load_and_split_strategy_a", lambda: (train_df, val_df, hold_df)
+        train_tht_tripgen, "load_and_split_tht_tripgen", lambda: (train_df, val_df, hold_df)
     )
 
     cache_dir = tmp_path / "topology_cache"
@@ -33,23 +33,23 @@ def test_train_strategy_a_logging(tmp_path, monkeypatch):
     emb = torch.randn(4, 6)
     torch.save(emb, cache_dir / "Efunc.pt")
 
-    monkeypatch.setattr(config, "SA_TOPOLOGY_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(config, "THT_TOPOLOGY_CACHE_DIR", str(cache_dir))
     monkeypatch.setattr(config, "SAVE_DATA_DIR", str(tmp_path / "save"))
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(config, "PLOT_DIR", str(tmp_path / "plots"))
 
-    monkeypatch.setattr(config, "SA_EPOCHS", 2)
-    monkeypatch.setattr(config, "SA_BATCH_SIZE", 2)
-    monkeypatch.setattr(config, "SA_LR", 1e-3)
-    monkeypatch.setattr(config, "SA_WEIGHT_DECAY", 0.0)
-    monkeypatch.setattr(config, "SA_EVAL_SAMPLE_RATIO", 1.0)
-    monkeypatch.setattr(config, "SA_LOG_BATCH_EVERY", 0)
-    monkeypatch.setattr(config, "SA_FLOW_DIAG_EVERY_EPOCHS", 0)
-    monkeypatch.setattr(config, "SA_MONITOR_METRICS_EVERY_EPOCHS", 0)
+    monkeypatch.setattr(config, "THT_EPOCHS", 2)
+    monkeypatch.setattr(config, "THT_BATCH_SIZE", 2)
+    monkeypatch.setattr(config, "THT_LR", 1e-3)
+    monkeypatch.setattr(config, "THT_WEIGHT_DECAY", 0.0)
+    monkeypatch.setattr(config, "THT_EVAL_SAMPLE_RATIO", 1.0)
+    monkeypatch.setattr(config, "THT_LOG_BATCH_EVERY", 0)
+    monkeypatch.setattr(config, "THT_FLOW_DIAG_EVERY_EPOCHS", 0)
+    monkeypatch.setattr(config, "THT_MONITOR_METRICS_EVERY_EPOCHS", 0)
     monkeypatch.setattr(config, "LOG_ENABLE_TENSORBOARD", False)
     monkeypatch.setattr(config, "LOG_FLUSH_EVERY", 1)
 
-    train_strategy_a.train_strategy_a(run_tag="logging", device=torch.device("cpu"))
+    train_tht_tripgen.train_tht_tripgen(run_tag="logging", device=torch.device("cpu"))
 
     output_dir = tmp_path / "save" / "logging"
     csv_path = output_dir / "logs" / "scalars.csv"

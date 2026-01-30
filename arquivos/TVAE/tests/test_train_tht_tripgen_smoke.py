@@ -7,10 +7,10 @@ import pytest
 torch = pytest.importorskip("torch")
 
 import config
-import train_strategy_a
+import train_tht_tripgen
 
 
-def test_train_strategy_a_smoke(tmp_path, monkeypatch):
+def test_train_tht_tripgen_smoke(tmp_path, monkeypatch):
     df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2, 3],
@@ -25,7 +25,7 @@ def test_train_strategy_a_smoke(tmp_path, monkeypatch):
     hold_df = df.iloc[:2].reset_index(drop=True)
 
     monkeypatch.setattr(
-        train_strategy_a, "load_and_split_strategy_a", lambda: (train_df, val_df, hold_df)
+        train_tht_tripgen, "load_and_split_tht_tripgen", lambda: (train_df, val_df, hold_df)
     )
 
     cache_dir = tmp_path / "topology_cache"
@@ -33,29 +33,29 @@ def test_train_strategy_a_smoke(tmp_path, monkeypatch):
     emb = torch.randn(4, 6)
     torch.save(emb, cache_dir / "Efunc.pt")
 
-    monkeypatch.setattr(config, "SA_TOPOLOGY_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(config, "THT_TOPOLOGY_CACHE_DIR", str(cache_dir))
     monkeypatch.setattr(config, "SAVE_DATA_DIR", str(tmp_path / "save"))
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(config, "PLOT_DIR", str(tmp_path / "plots"))
 
-    monkeypatch.setattr(config, "SA_EPOCHS", 1)
-    monkeypatch.setattr(config, "SA_BATCH_SIZE", 2)
-    monkeypatch.setattr(config, "SA_LR", 1e-3)
-    monkeypatch.setattr(config, "SA_WEIGHT_DECAY", 0.0)
-    monkeypatch.setattr(config, "SA_EVAL_SAMPLE_RATIO", 1.0)
+    monkeypatch.setattr(config, "THT_EPOCHS", 1)
+    monkeypatch.setattr(config, "THT_BATCH_SIZE", 2)
+    monkeypatch.setattr(config, "THT_LR", 1e-3)
+    monkeypatch.setattr(config, "THT_WEIGHT_DECAY", 0.0)
+    monkeypatch.setattr(config, "THT_EVAL_SAMPLE_RATIO", 1.0)
     monkeypatch.setattr(config, "COVERAGE_MAX_SAMPLES", 10)
     monkeypatch.setattr(config, "COVERAGE_CHUNK_SIZE", 2)
 
-    train_strategy_a.train_strategy_a(run_tag="smoke", device=torch.device("cpu"))
+    train_tht_tripgen.train_tht_tripgen(run_tag="smoke", device=torch.device("cpu"))
 
     output_dir = tmp_path / "save" / "smoke"
-    metrics_path = output_dir / "metrics" / "metrics_strategy_a_val.json"
-    hold_metrics_path = output_dir / "metrics" / "metrics_strategy_a_hold.json"
-    checkpoint_path = output_dir / "strategy_a.pt"
-    mappings_path = output_dir / "mappings_strategy_a.json"
-    loss_path = output_dir / "loss_strategy_a.csv"
-    synth_val_path = output_dir / "data" / "synthetic_strategy_a_val.csv"
-    synth_hold_path = output_dir / "data" / "synthetic_strategy_a_hold.csv"
+    metrics_path = output_dir / "metrics" / "metrics_tht_tripgen_val.json"
+    hold_metrics_path = output_dir / "metrics" / "metrics_tht_tripgen_hold.json"
+    checkpoint_path = output_dir / "tht_tripgen.pt"
+    mappings_path = output_dir / "mappings_tht_tripgen.json"
+    loss_path = output_dir / "loss_tht_tripgen.csv"
+    synth_val_path = output_dir / "data" / "synthetic_tht_tripgen_val.csv"
+    synth_hold_path = output_dir / "data" / "synthetic_tht_tripgen_hold.csv"
 
     assert checkpoint_path.exists()
     assert mappings_path.exists()

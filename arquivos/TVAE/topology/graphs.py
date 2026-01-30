@@ -1,4 +1,4 @@
-"""Graph builders for Strategy A topology.
+"""Graph builders for THT-TripGen topology.
 
 Gfunc: directed weighted graph from OD counts (log1p weights, top-K pruning).
 Gphys: undirected graph from physical adjacency edges.

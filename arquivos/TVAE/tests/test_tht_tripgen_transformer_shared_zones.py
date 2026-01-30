@@ -1,9 +1,9 @@
 import pandas as pd
 
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 
 
-def test_strategy_a_shared_zone_vocab_union():
+def test_tht_tripgen_shared_zone_vocab_union():
     train_df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2],
@@ -14,7 +14,7 @@ def test_strategy_a_shared_zone_vocab_union():
         }
     )
 
-    transformer = StrategyATransformer()
+    transformer = THTTripGenTransformer()
     transformer.fit(train_df)
 
     assert transformer.zone_categories == [1, 2, 3]

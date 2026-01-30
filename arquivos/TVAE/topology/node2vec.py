@@ -14,12 +14,12 @@ from topology.graphs import WeightedGraph
 
 @dataclass
 class Node2VecConfig:
-    embedding_dim: int = config.SA_NODE2VEC_DIM
-    walk_length: int = config.SA_NODE2VEC_WALK_LENGTH
-    walks_per_node: int = config.SA_NODE2VEC_WALKS_PER_NODE
-    window_size: int = config.SA_NODE2VEC_WINDOW
-    p: float = config.SA_NODE2VEC_P
-    q: float = config.SA_NODE2VEC_Q
+    embedding_dim: int = config.THT_NODE2VEC_DIM
+    walk_length: int = config.THT_NODE2VEC_WALK_LENGTH
+    walks_per_node: int = config.THT_NODE2VEC_WALKS_PER_NODE
+    window_size: int = config.THT_NODE2VEC_WINDOW
+    p: float = config.THT_NODE2VEC_P
+    q: float = config.THT_NODE2VEC_Q
     negative_samples: int = 5
     lr: float = 0.025
     epochs: int = 3

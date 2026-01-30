@@ -1,17 +1,17 @@
 import pandas as pd
 
 import config
-from data_processing.strategy_a_loader import split_strategy_a
+from data_processing.tht_tripgen_loader import split_tht_tripgen
 
 
-def test_split_strategy_a_s1_weekly_chronological(monkeypatch):
+def test_split_tht_tripgen_s1_weekly_chronological(monkeypatch):
     datetimes = pd.date_range("2024-01-01", periods=21, freq="D")
     df = pd.DataFrame({config.DATETIME_COL: datetimes})
 
-    monkeypatch.setattr(config, "SA_TRAIN_FRAC", 0.4)
-    monkeypatch.setattr(config, "SA_VAL_FRAC", 0.3)
+    monkeypatch.setattr(config, "THT_TRAIN_FRAC", 0.4)
+    monkeypatch.setattr(config, "THT_VAL_FRAC", 0.3)
 
-    train_df, val_df, hold_df = split_strategy_a(df, "S1")
+    train_df, val_df, hold_df = split_tht_tripgen(df, "S1")
 
     assert len(train_df) > 0
     assert len(val_df) > 0

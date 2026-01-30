@@ -9,21 +9,21 @@ import pandas as pd
 import torch
 
 import config
-from data_processing.strategy_a_loader import load_and_split_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
-from sample_strategy_a import sample_strategy_a
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
+from sample_tht_tripgen import sample_tht_tripgen
 from utils.evaluation import compute_metrics, compute_paper_metrics
 from utils.metrics import save_metrics_json
 from utils.serialization import (
-    STRATEGY_A_CHECKPOINT_FILENAME,
-    STRATEGY_A_MAPPINGS_FILENAME,
-    load_strategy_a_mappings,
+    THT_TRIPGEN_CHECKPOINT_FILENAME,
+    THT_TRIPGEN_MAPPINGS_FILENAME,
+    load_tht_tripgen_mappings,
 )
 
 
 def _resolve_paths(run_dir: Path) -> tuple[Path, Path]:
-    checkpoint = run_dir / STRATEGY_A_CHECKPOINT_FILENAME
-    mappings = run_dir / STRATEGY_A_MAPPINGS_FILENAME
+    checkpoint = run_dir / THT_TRIPGEN_CHECKPOINT_FILENAME
+    mappings = run_dir / THT_TRIPGEN_MAPPINGS_FILENAME
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
     if not mappings.exists():
@@ -31,7 +31,7 @@ def _resolve_paths(run_dir: Path) -> tuple[Path, Path]:
     return checkpoint, mappings
 
 
-def _filter_known(df: pd.DataFrame, transformer: StrategyATransformer) -> pd.DataFrame:
+def _filter_known(df: pd.DataFrame, transformer: THTTripGenTransformer) -> pd.DataFrame:
     idx = transformer.transform(df, drop_unknown=False)
     mask = idx.notna().all(axis=1) & idx["r"].notna()
     return df.loc[mask].reset_index(drop=True)
@@ -54,13 +54,13 @@ def main() -> int:
     parser.add_argument(
         "--run-dir",
         type=Path,
-        default=Path(config.SAVE_DATA_DIR) / "strategy_a",
+        default=Path(config.SAVE_DATA_DIR) / "tht_tripgen",
         help="Diretorio do experimento (contendo checkpoint e mappings).",
     )
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--mappings", type=Path, default=None)
     parser.add_argument("--rows", type=int, default=None)
-    parser.add_argument("--temperature", type=float, default=config.SA_SAMPLE_TEMPERATURE)
+    parser.add_argument("--temperature", type=float, default=config.THT_SAMPLE_TEMPERATURE)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--split", type=str, choices=["val", "hold"], default=None)
     parser.add_argument("--no-plots", action="store_true")
@@ -75,7 +75,7 @@ def main() -> int:
         "--output",
         type=Path,
         default=None,
-        help="Arquivo de metrics (default: <run-dir>/metrics_strategy_a_<split>.json).",
+        help="Arquivo de metrics (default: <run-dir>/metrics_tht_tripgen_<split>.json).",
     )
     parser.add_argument("--force-sample", action="store_true")
     args = parser.parse_args()
@@ -94,8 +94,8 @@ def main() -> int:
         eval_mod.plot_marginal_hist = lambda *_, **__: None
         eval_mod.plot_topk = lambda *_, **__: None
 
-    train_df, val_df, hold_df = load_and_split_strategy_a()
-    transformer = load_strategy_a_mappings(mappings)
+    train_df, val_df, hold_df = load_and_split_tht_tripgen()
+    transformer = load_tht_tripgen_mappings(mappings)
 
     train_df = _filter_known(train_df, transformer)
     val_df = _filter_known(val_df, transformer)
@@ -107,7 +107,7 @@ def main() -> int:
         raise RuntimeError("eval_df vazio; ajuste split ou filtros.")
 
     if args.rows is None:
-        ratio = float(getattr(config, "SA_EVAL_SAMPLE_RATIO", 1.0))
+        ratio = float(getattr(config, "THT_EVAL_SAMPLE_RATIO", 1.0))
         n_eval = int(np.ceil(len(eval_df) * ratio))
         n_eval = max(1, n_eval) if len(eval_df) > 0 else 0
     else:
@@ -120,10 +120,10 @@ def main() -> int:
             random_state=args.seed if args.seed is not None else config.GLOBAL_SEED,
         ).reset_index(drop=True)
 
-    synth_path = run_dir / f"synthetic_strategy_a_{split_name}.csv"
+    synth_path = run_dir / f"synthetic_tht_tripgen_{split_name}.csv"
     if args.force_sample or not synth_path.exists():
         start = time.monotonic()
-        synth_path = sample_strategy_a(
+        synth_path = sample_tht_tripgen(
             run_dir=run_dir,
             split=split_name,
             rows=n_eval,
@@ -131,7 +131,7 @@ def main() -> int:
             seed=args.seed,
         )
         elapsed_min = (time.monotonic() - start) / 60.0
-        print(f"[Recalc SA] sampled {n_eval} rows in {elapsed_min:.2f} min")
+        print(f"[Recalc THT-TripGen] sampled {n_eval} rows in {elapsed_min:.2f} min")
 
     synth_df = pd.read_csv(synth_path)
 
@@ -148,7 +148,7 @@ def main() -> int:
     metrics = compute_metrics(
         eval_metrics_df,
         synth_metrics_df,
-        order_key=f"strategy_a_{split_name}",
+        order_key=f"tht_tripgen_{split_name}",
         output_dir=run_dir,
         plot_dir=plot_dir,
     )
@@ -166,14 +166,14 @@ def main() -> int:
 
     if args.output is None:
         if split_name == "val":
-            out_path = run_dir / "metrics_strategy_a.json"
+            out_path = run_dir / "metrics_tht_tripgen.json"
         else:
-            out_path = run_dir / "metrics_strategy_a_hold.json"
+            out_path = run_dir / "metrics_tht_tripgen_hold.json"
     else:
         out_path = args.output
 
     save_metrics_json(metrics, out_path)
-    print(f"[Recalc SA] saved {out_path}")
+    print(f"[Recalc THT-TripGen] saved {out_path}")
     return 0
 
 

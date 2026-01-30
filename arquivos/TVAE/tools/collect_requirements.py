@@ -114,7 +114,7 @@ def collect_external_modules(entry: Path, *, project_roots: list[Path]) -> list[
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("entry", type=Path, help="Python entrypoint (e.g. train_tvae.py)")
+    ap.add_argument("entry", type=Path, help="Python entrypoint (e.g. train_tht_tripgen.py)")
     ap.add_argument(
         "--project-root",
         type=Path,

@@ -9,14 +9,14 @@ import pandas as pd
 import torch
 
 import config
-from data_processing.strategy_a_loader import load_and_split_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from utils.serialization import (
-    STRATEGY_A_CHECKPOINT_FILENAME,
-    STRATEGY_A_MAPPINGS_FILENAME,
-    build_strategy_a_model_from_checkpoint,
+    THT_TRIPGEN_CHECKPOINT_FILENAME,
+    THT_TRIPGEN_MAPPINGS_FILENAME,
+    build_tht_tripgen_model_from_checkpoint,
     load_checkpoint,
-    load_strategy_a_mappings,
+    load_tht_tripgen_mappings,
 )
 
 
@@ -71,7 +71,7 @@ def _sample_conditioned(
     return pd.DataFrame(data)
 
 
-def sample_strategy_a(
+def sample_tht_tripgen(
     *,
     run_dir: Path,
     split: str | None = None,
@@ -84,21 +84,21 @@ def sample_strategy_a(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     run_dir = Path(run_dir)
-    checkpoint_path = run_dir / STRATEGY_A_CHECKPOINT_FILENAME
-    mappings_path = run_dir / STRATEGY_A_MAPPINGS_FILENAME
+    checkpoint_path = run_dir / THT_TRIPGEN_CHECKPOINT_FILENAME
+    mappings_path = run_dir / THT_TRIPGEN_MAPPINGS_FILENAME
 
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
     if not mappings_path.exists():
         raise FileNotFoundError(f"Missing mappings: {mappings_path}")
 
-    transformer: StrategyATransformer = load_strategy_a_mappings(mappings_path)
+    transformer: THTTripGenTransformer = load_tht_tripgen_mappings(mappings_path)
     state = load_checkpoint(checkpoint_path, device=device)
-    model = build_strategy_a_model_from_checkpoint(state).to(device)
+    model = build_tht_tripgen_model_from_checkpoint(state).to(device)
     model.load_state_dict(state["model_state"])
     model.eval()
 
-    _, val_df, hold_df = load_and_split_strategy_a()
+    _, val_df, hold_df = load_and_split_tht_tripgen()
     split_name, eval_df = _choose_eval_split(val_df, hold_df, split=split)
 
     eval_idx = transformer.transform(eval_df, drop_unknown=True)
@@ -116,7 +116,7 @@ def sample_strategy_a(
     temperature = (
         float(temperature)
         if temperature is not None
-        else float(getattr(config, "SA_SAMPLE_TEMPERATURE", 1.0))
+        else float(getattr(config, "THT_SAMPLE_TEMPERATURE", 1.0))
     )
 
     synth_idx = _sample_conditioned(
@@ -126,19 +126,19 @@ def sample_strategy_a(
         temperature=temperature,
         device=device,
         seed=seed,
-        batch_size=int(getattr(config, "SA_BATCH_SIZE", 1024)),
+        batch_size=int(getattr(config, "THT_BATCH_SIZE", 1024)),
     )
 
     decoded = transformer.decode(synth_idx)
     out_df = decoded[config.OUTPUT_COLUMNS].copy()
-    out_path = run_dir / f"synthetic_strategy_a_{split_name}.csv"
+    out_path = run_dir / f"synthetic_tht_tripgen_{split_name}.csv"
     out_df.to_csv(out_path, index=False)
     return out_path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Sample from a trained Strategy A run")
-    parser.add_argument("--run-dir", required=True, help="Path to Strategy A run directory")
+    parser = argparse.ArgumentParser(description="Sample from a trained THT-TripGen run")
+    parser.add_argument("--run-dir", required=True, help="Path to THT-TripGen run directory")
     parser.add_argument(
         "--split",
         choices=["val", "hold"],
@@ -150,7 +150,7 @@ def main() -> int:
         "--temperature",
         type=float,
         default=None,
-        help="Sampling temperature (default: config.SA_SAMPLE_TEMPERATURE)",
+        help="Sampling temperature (default: config.THT_SAMPLE_TEMPERATURE)",
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed for sampling")
     parser.add_argument("--device", default=None, help="torch device override")
@@ -162,7 +162,7 @@ def main() -> int:
         else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     )
 
-    out_path = sample_strategy_a(
+    out_path = sample_tht_tripgen(
         run_dir=Path(args.run_dir),
         split=args.split,
         rows=args.rows,
@@ -170,7 +170,7 @@ def main() -> int:
         seed=args.seed,
         device=device,
     )
-    print(f"[Strategy A] saved synthetic data: {out_path}")
+    print(f"[THT-TripGen] saved synthetic data: {out_path}")
     return 0
 
 

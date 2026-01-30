@@ -10,10 +10,10 @@ pytest.importorskip("shapely")
 import pandas as pd
 from shapely.geometry import Polygon
 
-import tools.build_sa_phys_edges_csv as builder
+import tools.build_tht_phys_edges_csv as builder
 
 
-def test_build_sa_phys_edges_csv_with_bridge(tmp_path, monkeypatch):
+def test_build_tht_phys_edges_csv_with_bridge(tmp_path, monkeypatch):
     polygons = [
         Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
         Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),

@@ -9,10 +9,10 @@ torch = pytest.importorskip("torch")
 
 import config
 import recalc_metrics_hold
-import recalc_metrics_strategy_a_hold
-import train_strategy_a
+import recalc_metrics_tht_tripgen_hold
+import train_tht_tripgen
 import train_tvae
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from tools import run_full_pipeline
 
 
@@ -54,21 +54,21 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
     sa_hold = sa_df.iloc[:2].reset_index(drop=True)
 
     monkeypatch.setattr(
-        train_strategy_a, "load_and_split_strategy_a", lambda: (sa_train, sa_val, sa_hold)
+        train_tht_tripgen, "load_and_split_tht_tripgen", lambda: (sa_train, sa_val, sa_hold)
     )
     monkeypatch.setattr(
-        recalc_metrics_strategy_a_hold,
-        "load_and_split_strategy_a",
+        recalc_metrics_tht_tripgen_hold,
+        "load_and_split_tht_tripgen",
         lambda: (sa_train, sa_val, sa_hold),
     )
 
     cache_dir = tmp_path / "topology_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    transformer = StrategyATransformer().fit(sa_train)
+    transformer = THTTripGenTransformer().fit(sa_train)
     emb = torch.randn(transformer.num_zones, 6)
     torch.save(emb, cache_dir / "Efunc.pt")
 
-    monkeypatch.setattr(config, "SA_TOPOLOGY_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(config, "THT_TOPOLOGY_CACHE_DIR", str(cache_dir))
     monkeypatch.setattr(config, "SAVE_DATA_DIR", str(tmp_path / "save"))
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(config, "PLOT_DIR", str(tmp_path / "plots"))
@@ -81,10 +81,10 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PAIR_KL_WEIGHT", 0.0)
     monkeypatch.setattr(config, "PICKUP_KL_WEIGHT", 0.0)
 
-    monkeypatch.setattr(config, "SA_EPOCHS", 1)
-    monkeypatch.setattr(config, "SA_BATCH_SIZE", 2)
-    monkeypatch.setattr(config, "SA_LR", 1e-3)
-    monkeypatch.setattr(config, "SA_WEIGHT_DECAY", 0.0)
+    monkeypatch.setattr(config, "THT_EPOCHS", 1)
+    monkeypatch.setattr(config, "THT_BATCH_SIZE", 2)
+    monkeypatch.setattr(config, "THT_LR", 1e-3)
+    monkeypatch.setattr(config, "THT_WEIGHT_DECAY", 0.0)
 
     baseline_dir = tmp_path / "save" / "baseline_smoke"
     strategy_dir = tmp_path / "save" / "strategy_smoke"
@@ -94,7 +94,7 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
         "run_full_pipeline.py",
         "--baseline-run-dir",
         str(baseline_dir),
-        "--strategy-run-dir",
+        "--tht-tripgen-run-dir",
         str(strategy_dir),
         "--comparison-dir",
         str(comparison_dir),
@@ -107,4 +107,4 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
     table_path = comparison_dir / "metrics_table.csv"
     assert table_path.exists()
     table = pd.read_csv(table_path)
-    assert set(table["model"].tolist()) == {"baseline", "strategy_a"}
+    assert set(table["model"].tolist()) == {"baseline", "tht_tripgen"}

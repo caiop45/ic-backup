@@ -1,11 +1,11 @@
-"""Build and cache node2vec embeddings for Strategy A.
+"""Build and cache node2vec embeddings for THT-TripGen.
 
 Usage:
-    python tools/build_zone_embeddings.py [--force] [--device cpu] [--alpha 1.0] [--beta 1.0]
+    python tools/build_tht_zone_embeddings.py [--force] [--device cpu] [--alpha 1.0] [--beta 1.0]
 
 This script:
-    - Loads Strategy A train data.
-    - Fits StrategyATransformer to build shared zone vocabulary.
+    - Loads THT-TripGen train data.
+    - Fits THTTripGenTransformer to build shared zone vocabulary.
     - Builds functional graph from OD counts (top-K pruning).
     - Optionally builds physical graph from adjacency CSV (index space).
     - Trains node2vec embeddings and saves to the topology cache directory.
@@ -20,8 +20,8 @@ from typing import Dict
 import torch
 
 import config
-from data_processing.strategy_a_loader import load_and_split_strategy_a
-from data_processing.strategy_a_transformer import StrategyATransformer
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from topology.embeddings import combine_embeddings
 from topology.graphs import build_functional_graph, build_physical_graph_from_edges
 from topology.node2vec import Node2VecConfig, train_node2vec
@@ -45,7 +45,7 @@ def main() -> None:
     parser.add_argument("--beta", type=float, default=1.0, help="scale for Efunc")
     args = parser.parse_args()
 
-    cache_dir = Path(config.SA_TOPOLOGY_CACHE_DIR)
+    cache_dir = Path(config.THT_TOPOLOGY_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     func_path = cache_dir / "Efunc.pt"
@@ -53,18 +53,18 @@ def main() -> None:
     comb_path = cache_dir / "Ecomb.pt"
     meta_path = cache_dir / "metadata.json"
 
-    train_df, _, _ = load_and_split_strategy_a()
-    transformer = StrategyATransformer().fit(train_df)
+    train_df, _, _ = load_and_split_tht_tripgen()
+    transformer = THTTripGenTransformer().fit(train_df)
     train_idx = transformer.transform(train_df)
     num_nodes = transformer.num_zones
 
     node2vec_cfg = Node2VecConfig(
-        embedding_dim=config.SA_NODE2VEC_DIM,
-        walk_length=config.SA_NODE2VEC_WALK_LENGTH,
-        walks_per_node=config.SA_NODE2VEC_WALKS_PER_NODE,
-        window_size=config.SA_NODE2VEC_WINDOW,
-        p=config.SA_NODE2VEC_P,
-        q=config.SA_NODE2VEC_Q,
+        embedding_dim=config.THT_NODE2VEC_DIM,
+        walk_length=config.THT_NODE2VEC_WALK_LENGTH,
+        walks_per_node=config.THT_NODE2VEC_WALKS_PER_NODE,
+        window_size=config.THT_NODE2VEC_WINDOW,
+        p=config.THT_NODE2VEC_P,
+        q=config.THT_NODE2VEC_Q,
         seed=config.GLOBAL_SEED,
     )
 
@@ -74,17 +74,17 @@ def main() -> None:
         gfunc = build_functional_graph(
             train_idx,
             num_nodes=num_nodes,
-            top_k=config.SA_GFUNC_TOPK,
+            top_k=config.THT_GFUNC_TOPK,
             weight_mode="log1p",
         )
         efunc = train_node2vec(gfunc, node2vec_cfg, device=args.device)
         _save_tensor(func_path, efunc)
     embeddings["Efunc"] = torch.load(func_path, map_location="cpu")
 
-    if config.SA_PHYS_EDGES_CSV:
+    if config.THT_PHYS_EDGES_CSV:
         if args.force or not phys_path.exists():
             gphys = build_physical_graph_from_edges(
-                config.SA_PHYS_EDGES_CSV, num_nodes=num_nodes
+                config.THT_PHYS_EDGES_CSV, num_nodes=num_nodes
             )
             ephys = train_node2vec(gphys, node2vec_cfg, device=args.device)
             _save_tensor(phys_path, ephys)
@@ -115,8 +115,8 @@ def main() -> None:
             "batch_size": node2vec_cfg.batch_size,
             "seed": node2vec_cfg.seed,
         },
-        "gfunc_top_k": config.SA_GFUNC_TOPK,
-        "phys_edges_csv": config.SA_PHYS_EDGES_CSV,
+        "gfunc_top_k": config.THT_GFUNC_TOPK,
+        "phys_edges_csv": config.THT_PHYS_EDGES_CSV,
         "alpha": args.alpha,
         "beta": args.beta,
     }

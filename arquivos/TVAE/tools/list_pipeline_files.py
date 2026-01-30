@@ -81,7 +81,7 @@ def main() -> int:
             "List local .py files used by a Python entrypoint via static import scan."
         )
     )
-    ap.add_argument("entry", type=Path, help="Entrypoint file (e.g. train_tvae.py)")
+    ap.add_argument("entry", type=Path, help="Entrypoint file (e.g. train_tht_tripgen.py)")
     ap.add_argument(
         "--project-root",
         type=Path,

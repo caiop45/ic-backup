@@ -1,6 +1,6 @@
-"""Strategy A transformer with shared zone vocabulary.
+"""THT-TripGen transformer with shared zone vocabulary.
 
-Schema (Strategy A input):
+Schema (THT-TripGen input):
     - categorical: hora_do_dia, pickup_id, dropoff_id, dia_da_semana
       optional: is_weekend, month
     - continuous: r in [0, 1)
@@ -33,7 +33,7 @@ CONDITIONAL_IDX_NAMES = {
 
 
 @dataclass
-class StrategyATransformerState:
+class THTTripGenTransformerState:
     zone_categories: List[int]
     time_categories: List[int]
     conditional_categories: Dict[str, List[int]]
@@ -43,8 +43,8 @@ class StrategyATransformerState:
     use_month: bool
 
 
-class StrategyATransformer:
-    """Transformer for Strategy A with a shared zone vocabulary."""
+class THTTripGenTransformer:
+    """Transformer for THT-TripGen with a shared zone vocabulary."""
 
     def __init__(
         self,
@@ -53,9 +53,9 @@ class StrategyATransformer:
         use_weekend: bool | None = None,
         use_month: bool | None = None,
     ) -> None:
-        self.min_r_eps = float(config.SA_MIN_R_EPS) if min_r_eps is None else float(min_r_eps)
-        self.use_weekend = config.SA_USE_WEEKEND if use_weekend is None else bool(use_weekend)
-        self.use_month = config.SA_USE_MONTH if use_month is None else bool(use_month)
+        self.min_r_eps = float(config.THT_MIN_R_EPS) if min_r_eps is None else float(min_r_eps)
+        self.use_weekend = config.THT_USE_WEEKEND if use_weekend is None else bool(use_weekend)
+        self.use_month = config.THT_USE_MONTH if use_month is None else bool(use_month)
 
         self.zone_categories: List[int] = []
         self.time_categories: List[int] = []
@@ -111,7 +111,7 @@ class StrategyATransformer:
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
 
-    def fit(self, train_df: pd.DataFrame) -> "StrategyATransformer":
+    def fit(self, train_df: pd.DataFrame) -> "THTTripGenTransformer":
         """Fit categorical mappings using train data only."""
         self._ensure_columns(train_df, self._required_columns())
 
@@ -144,7 +144,7 @@ class StrategyATransformer:
         return self
 
     def transform(self, df: pd.DataFrame, *, drop_unknown: bool = True) -> pd.DataFrame:
-        """Transform Strategy A dataframe to index space.
+        """Transform THT-TripGen dataframe to index space.
 
         When drop_unknown is True, rows containing any unknown categorical value
         are removed and the output indices are cast to int64.
@@ -224,8 +224,8 @@ class StrategyATransformer:
         out[R_COL] = df_idx[R_COL].astype("float32")
         return out
 
-    def state_dict(self) -> StrategyATransformerState:
-        return StrategyATransformerState(
+    def state_dict(self) -> THTTripGenTransformerState:
+        return THTTripGenTransformerState(
             zone_categories=list(self.zone_categories),
             time_categories=list(self.time_categories),
             conditional_categories={
@@ -237,7 +237,7 @@ class StrategyATransformer:
             use_month=bool(self.use_month),
         )
 
-    def load_state_dict(self, state: StrategyATransformerState) -> None:
+    def load_state_dict(self, state: THTTripGenTransformerState) -> None:
         self.zone_categories = [int(v) for v in state.zone_categories]
         self.time_categories = [int(v) for v in state.time_categories]
         normalized_categories: Dict[str, List[int]] = {}

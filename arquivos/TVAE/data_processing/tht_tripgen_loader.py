@@ -1,4 +1,4 @@
-"""Strategy A data loader for x~ = (h, r, o, d, u).
+"""THT-TripGen data loader for x~ = (h, r, o, d, u).
 
 Schema:
     h: discrete time bin (0..H-1) stored in "hora_do_dia"
@@ -21,28 +21,28 @@ import pandas as pd
 import config
 
 
-StrategySplit = Literal["S1", "S2"]
+THTSplit = Literal["S1", "S2"]
 
 
-def _apply_time_filters_strategy_a(df: pd.DataFrame) -> pd.DataFrame:
+def _apply_time_filters_tht_tripgen(df: pd.DataFrame) -> pd.DataFrame:
     if config.DATETIME_COL not in df.columns:
         raise ValueError(f"Missing datetime column: {config.DATETIME_COL}")
 
     dt = df[config.DATETIME_COL]
-    if config.SA_FILTER_YEAR is not None:
-        df = df[dt.dt.year == config.SA_FILTER_YEAR]
+    if config.THT_FILTER_YEAR is not None:
+        df = df[dt.dt.year == config.THT_FILTER_YEAR]
         dt = df[config.DATETIME_COL]
-    if config.SA_FILTER_MONTHS:
-        df = df[dt.dt.month.isin(config.SA_FILTER_MONTHS)]
+    if config.THT_FILTER_MONTHS:
+        df = df[dt.dt.month.isin(config.THT_FILTER_MONTHS)]
         dt = df[config.DATETIME_COL]
-    if config.SA_FILTER_DOW_MIN is not None and config.SA_FILTER_DOW_MAX is not None:
-        df = df[dt.dt.dayofweek.between(config.SA_FILTER_DOW_MIN, config.SA_FILTER_DOW_MAX)]
+    if config.THT_FILTER_DOW_MIN is not None and config.THT_FILTER_DOW_MAX is not None:
+        df = df[dt.dt.dayofweek.between(config.THT_FILTER_DOW_MIN, config.THT_FILTER_DOW_MAX)]
         dt = df[config.DATETIME_COL]
-    if config.SA_FILTER_START_DATE is not None:
-        df = df[dt >= pd.to_datetime(config.SA_FILTER_START_DATE)]
+    if config.THT_FILTER_START_DATE is not None:
+        df = df[dt >= pd.to_datetime(config.THT_FILTER_START_DATE)]
         dt = df[config.DATETIME_COL]
-    if config.SA_FILTER_END_DATE is not None:
-        df = df[dt <= pd.to_datetime(config.SA_FILTER_END_DATE)]
+    if config.THT_FILTER_END_DATE is not None:
+        df = df[dt <= pd.to_datetime(config.THT_FILTER_END_DATE)]
 
     return df
 
@@ -75,35 +75,35 @@ def _compute_h_and_r(
     return h.astype("int64"), r
 
 
-def _strategy_a_columns() -> List[str]:
-    cols = list(config.SA_STRATEGY_A_COLUMNS)
+def _tht_tripgen_columns() -> List[str]:
+    cols = list(config.THT_TRIPGEN_COLUMNS)
     required = ["hora_do_dia", "r", "pickup_id", "dropoff_id", "dia_da_semana"]
     missing = [col for col in required if col not in cols]
     if missing:
-        raise ValueError(f"SA_STRATEGY_A_COLUMNS missing required columns: {missing}")
+        raise ValueError(f"THT_TRIPGEN_COLUMNS missing required columns: {missing}")
 
-    if config.SA_USE_WEEKEND and "is_weekend" not in cols:
+    if config.THT_USE_WEEKEND and "is_weekend" not in cols:
         cols.append("is_weekend")
-    if config.SA_USE_MONTH and "month" not in cols:
+    if config.THT_USE_MONTH and "month" not in cols:
         cols.append("month")
 
     return cols
 
 
-def load_raw_data_strategy_a() -> pd.DataFrame:
+def load_raw_data_tht_tripgen() -> pd.DataFrame:
     df = pd.read_parquet(config.REAL_DATA_PATH)
     df[config.DATETIME_COL] = pd.to_datetime(df[config.DATETIME_COL], errors="coerce")
     df = df.dropna(
         subset=[config.DATETIME_COL, config.PICKUP_ID_COL, config.DROPOFF_ID_COL]
     )
 
-    df = _apply_time_filters_strategy_a(df)
+    df = _apply_time_filters_tht_tripgen(df)
     df = df.copy()
 
     h, r = _compute_h_and_r(
         df[config.DATETIME_COL],
-        H=config.SA_TIME_BINS_H,
-        eps=config.SA_MIN_R_EPS,
+        H=config.THT_TIME_BINS_H,
+        eps=config.THT_MIN_R_EPS,
     )
 
     df["hora_do_dia"] = h.astype("int64")
@@ -112,14 +112,14 @@ def load_raw_data_strategy_a() -> pd.DataFrame:
     df["pickup_id"] = df[config.PICKUP_ID_COL].astype("int64")
     df["dropoff_id"] = df[config.DROPOFF_ID_COL].astype("int64")
 
-    if config.SA_USE_WEEKEND:
+    if config.THT_USE_WEEKEND:
         df["is_weekend"] = (df["dia_da_semana"] >= 5).astype("int64")
-    if config.SA_USE_MONTH:
+    if config.THT_USE_MONTH:
         df["month"] = df[config.DATETIME_COL].dt.month.astype("int64")
 
-    keep_cols = [config.DATETIME_COL] + _strategy_a_columns()
+    keep_cols = [config.DATETIME_COL] + _tht_tripgen_columns()
     df = df[keep_cols]
-    df = df.dropna(subset=_strategy_a_columns())
+    df = df.dropna(subset=_tht_tripgen_columns())
 
     return df
 
@@ -216,8 +216,8 @@ def _split_by_day(
     return df_train, df_val, df_hold
 
 
-def split_strategy_a(
-    df: pd.DataFrame, strategy: StrategySplit
+def split_tht_tripgen(
+    df: pd.DataFrame, strategy: THTSplit
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if config.DATETIME_COL not in df.columns:
         raise ValueError(f"Missing datetime column: {config.DATETIME_COL}")
@@ -228,28 +228,28 @@ def split_strategy_a(
     if strategy == "S1":
         return _split_weekly_chronological(
             df,
-            train_frac=config.SA_TRAIN_FRAC,
-            val_frac=config.SA_VAL_FRAC,
+            train_frac=config.THT_TRAIN_FRAC,
+            val_frac=config.THT_VAL_FRAC,
             datetime_col=config.DATETIME_COL,
         )
 
     return _split_by_day(
         df,
-        train_frac=config.SA_TRAIN_FRAC,
-        val_frac=config.SA_VAL_FRAC,
+        train_frac=config.THT_TRAIN_FRAC,
+        val_frac=config.THT_VAL_FRAC,
         datetime_col=config.DATETIME_COL,
-        seed=config.SA_SPLIT_SEED,
+        seed=config.THT_SPLIT_SEED,
     )
 
 
-def load_and_split_strategy_a(
-    split: StrategySplit | None = None,
+def load_and_split_tht_tripgen(
+    split: THTSplit | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    df = load_raw_data_strategy_a()
-    strategy = config.SA_SPLIT_STRATEGY if split is None else split
-    train_df, val_df, hold_df = split_strategy_a(df, strategy)
+    df = load_raw_data_tht_tripgen()
+    strategy = config.THT_SPLIT_STRATEGY if split is None else split
+    train_df, val_df, hold_df = split_tht_tripgen(df, strategy)
 
-    cols = _strategy_a_columns()
+    cols = _tht_tripgen_columns()
     drop_cols = [config.DATETIME_COL]
 
     train_df = train_df.drop(columns=drop_cols, errors="ignore")[cols].reset_index(

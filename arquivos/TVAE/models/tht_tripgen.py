@@ -1,4 +1,4 @@
-"""Strategy A discrete generator: p(h|u) p(o|h,u) p(d|o,h,u).
+"""THT-TripGen discrete generator: p(h|u) p(o|h,u) p(d|o,h,u).
 
 Embedding-softmax for destination uses frozen zone embeddings E (no gradients).
 """
@@ -16,7 +16,7 @@ from models.flows.conditional_spline_1d import ConditionalSplineFlow1D
 
 
 @dataclass(frozen=True)
-class StrategyAInputs:
+class THTTripGenInputs:
     u: Dict[str, torch.Tensor]
     h_idx: torch.Tensor
     o_idx: torch.Tensor
@@ -45,8 +45,8 @@ def _make_mlp(
     return nn.Sequential(*modules)
 
 
-class StrategyAModel(nn.Module):
-    """Strategy A model implementing time-first factorization.
+class THTTripGenModel(nn.Module):
+    """THT-TripGen model implementing time-first factorization.
 
     p(h|u) p(o|h,u) p(d|o,h,u)
     """
@@ -58,21 +58,21 @@ class StrategyAModel(nn.Module):
         num_time_bins: int,
         conditional_cardinalities: Dict[str, int],
         frozen_zone_embeddings: torch.Tensor,
-        cond_emb_dim: int = config.SA_COND_EMB_DIM,
-        time_emb_dim: int = config.SA_TIME_EMB_DIM,
-        origin_emb_dim: int = config.SA_ORIGIN_EMB_DIM,
-        context_mlp_hidden: int = config.SA_MODEL_HIDDEN,
-        context_mlp_layers: int = config.SA_MODEL_LAYERS,
-        dropout: float = config.SA_MODEL_DROPOUT,
-        destination_head_type: str = config.SA_DEST_HEAD_TYPE,
-        min_r_eps: float = config.SA_MIN_R_EPS,
-        residual_num_layers: int = config.SA_RESIDUAL_NUM_LAYERS,
-        residual_num_bins: int = config.SA_RESIDUAL_NUM_BINS,
-        residual_context_hidden: int = config.SA_RESIDUAL_CONTEXT_HIDDEN,
-        residual_min_bin_width: float = config.SA_RESIDUAL_MIN_BIN_WIDTH,
-        residual_min_bin_height: float = config.SA_RESIDUAL_MIN_BIN_HEIGHT,
-        residual_min_deriv: float = config.SA_RESIDUAL_MIN_DERIV,
-        residual_eps: float = config.SA_RESIDUAL_EPS,
+        cond_emb_dim: int = config.THT_COND_EMB_DIM,
+        time_emb_dim: int = config.THT_TIME_EMB_DIM,
+        origin_emb_dim: int = config.THT_ORIGIN_EMB_DIM,
+        context_mlp_hidden: int = config.THT_MODEL_HIDDEN,
+        context_mlp_layers: int = config.THT_MODEL_LAYERS,
+        dropout: float = config.THT_MODEL_DROPOUT,
+        destination_head_type: str = config.THT_DEST_HEAD_TYPE,
+        min_r_eps: float = config.THT_MIN_R_EPS,
+        residual_num_layers: int = config.THT_RESIDUAL_NUM_LAYERS,
+        residual_num_bins: int = config.THT_RESIDUAL_NUM_BINS,
+        residual_context_hidden: int = config.THT_RESIDUAL_CONTEXT_HIDDEN,
+        residual_min_bin_width: float = config.THT_RESIDUAL_MIN_BIN_WIDTH,
+        residual_min_bin_height: float = config.THT_RESIDUAL_MIN_BIN_HEIGHT,
+        residual_min_deriv: float = config.THT_RESIDUAL_MIN_DERIV,
+        residual_eps: float = config.THT_RESIDUAL_EPS,
     ) -> None:
         super().__init__()
 
@@ -315,7 +315,7 @@ class StrategyAModel(nn.Module):
         u: Dict[str, torch.Tensor | int] | None = None,
         h: torch.Tensor | int | None = None,
         o: torch.Tensor | int | None = None,
-        temperature: float = config.SA_SAMPLE_TEMPERATURE,
+        temperature: float = config.THT_SAMPLE_TEMPERATURE,
         seed: int | None = None,
     ) -> Dict[str, torch.Tensor]:
         if n <= 0:

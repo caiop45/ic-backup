@@ -39,7 +39,7 @@ def build_metrics_table(
     strategy_metrics: Dict[str, object],
     *,
     baseline_label: str = "baseline",
-    strategy_label: str = "strategy_a",
+    strategy_label: str = "tht_tripgen",
     baseline_run: Path | None = None,
     strategy_run: Path | None = None,
     columns: List[str] | None = None,
@@ -87,11 +87,25 @@ def _resolve_metrics_path(run_dir: Path, preferred: Iterable[str | Path]) -> Pat
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare baseline TVAE and Strategy A metrics")
+    parser = argparse.ArgumentParser(description="Compare baseline TVAE and THT-TripGen metrics")
     parser.add_argument("--baseline-run", type=Path, required=True)
-    parser.add_argument("--strategy-a-run", type=Path, required=True)
+    parser.add_argument(
+        "--tht-tripgen-run",
+        "--strategy-a-run",
+        dest="tht_tripgen_run",
+        type=Path,
+        required=True,
+        help="THT-TripGen run directory (alias: --strategy-a-run)",
+    )
     parser.add_argument("--baseline-metrics", type=Path, default=None)
-    parser.add_argument("--strategy-metrics", type=Path, default=None)
+    parser.add_argument(
+        "--tht-tripgen-metrics",
+        "--strategy-metrics",
+        dest="tht_tripgen_metrics",
+        type=Path,
+        default=None,
+        help="THT-TripGen metrics file (alias: --strategy-metrics)",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path.cwd())
     args = parser.parse_args()
 
@@ -106,13 +120,13 @@ def main() -> int:
             "metrics_order_1.json",
         ],
     )
-    strategy_metrics_path = args.strategy_metrics or _resolve_metrics_path(
-        args.strategy_a_run,
+    strategy_metrics_path = args.tht_tripgen_metrics or _resolve_metrics_path(
+        args.tht_tripgen_run,
         [
-            Path("metrics") / "metrics_strategy_a_hold.json",
-            Path("metrics") / "metrics_strategy_a_val.json",
-            "metrics_strategy_a_hold.json",
-            "metrics_strategy_a.json",
+            Path("metrics") / "metrics_tht_tripgen_hold.json",
+            Path("metrics") / "metrics_tht_tripgen_val.json",
+            "metrics_tht_tripgen_hold.json",
+            "metrics_tht_tripgen.json",
         ],
     )
 
@@ -123,7 +137,7 @@ def main() -> int:
         baseline_metrics,
         strategy_metrics,
         baseline_run=args.baseline_run,
-        strategy_run=args.strategy_a_run,
+        strategy_run=args.tht_tripgen_run,
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
