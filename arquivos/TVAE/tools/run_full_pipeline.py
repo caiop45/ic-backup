@@ -59,7 +59,10 @@ def _call_main(module, argv: list[str]) -> None:
         sys.argv = original
 
 
-def _ensure_embeddings(build: bool, device: str | None) -> None:
+def _ensure_embeddings(build: bool, device: str | None, skip_check: bool) -> None:
+    if skip_check:
+        print("[Pipeline] skipping embeddings check/build (assumes Efunc/Ecomb already exist)")
+        return
     cache_dir = Path(config.THT_TOPOLOGY_CACHE_DIR)
     comb_path = cache_dir / "Ecomb.pt"
     func_path = cache_dir / "Efunc.pt"
@@ -166,12 +169,45 @@ def main() -> int:
         default=None,
         help="THT-TripGen run directory (alias: --strategy-run-dir)",
     )
+    parser.add_argument(
+        "--tht-only",
+        action="store_true",
+        help="Run only THT-TripGen (skips baseline + comparison).",
+    )
+    parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip baseline TVAE training + eval.",
+    )
     parser.add_argument("--force-train", action="store_true")
     parser.add_argument("--force-sample", action="store_true")
-    parser.add_argument("--build-embeddings", action="store_true")
+    parser.add_argument(
+        "--build-embeddings",
+        action="store_true",
+        help="Build embeddings if missing (default behavior).",
+    )
+    parser.add_argument(
+        "--skip-embeddings",
+        action="store_true",
+        help="Skip embeddings build/check (assumes Efunc/Ecomb already exist).",
+    )
+    parser.add_argument(
+        "--skip-comparison",
+        action="store_true",
+        help="Skip comparison tables/plots (useful for THT-only runs).",
+    )
+    parser.add_argument(
+        "--skip-plots",
+        action="store_true",
+        help="Skip training curve plots.",
+    )
     parser.add_argument("--comparison-dir", type=Path, default=None)
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
+
+    if args.tht_only:
+        args.skip_baseline = True
+        args.skip_comparison = True
 
     set_seed(config.GLOBAL_SEED)
 
@@ -199,20 +235,36 @@ def main() -> int:
         else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     )
 
-    _ensure_embeddings(args.build_embeddings, str(device))
+    build_embeddings = True
+    if args.skip_embeddings:
+        build_embeddings = False
+    elif args.build_embeddings:
+        build_embeddings = True
 
-    _maybe_train_tvae(baseline_dir, args.force_train)
+    _ensure_embeddings(build_embeddings, str(device), args.skip_embeddings)
+
+    if not args.skip_baseline:
+        _maybe_train_tvae(baseline_dir, args.force_train)
     _maybe_train_tht_tripgen(tht_tripgen_dir, args.force_train, device)
 
-    _recalc_baseline(baseline_dir, args.force_sample)
+    if not args.skip_baseline:
+        _recalc_baseline(baseline_dir, args.force_sample)
     _recalc_tht_tripgen(tht_tripgen_dir, args.force_sample)
 
-    _compare_runs(baseline_dir, tht_tripgen_dir, comparison_dir)
+    if args.skip_baseline and not args.skip_comparison:
+        print("[Pipeline] baseline skipped; comparison disabled")
+        args.skip_comparison = True
 
-    _plot_curves(baseline_dir, plots_dir, "baseline")
-    _plot_curves(tht_tripgen_dir, plots_dir, "tht_tripgen")
+    if not args.skip_comparison:
+        _compare_runs(baseline_dir, tht_tripgen_dir, comparison_dir)
 
-    print(f"[Pipeline] comparison outputs -> {comparison_dir}")
+    if not args.skip_plots:
+        if not args.skip_baseline:
+            _plot_curves(baseline_dir, plots_dir, "baseline")
+        _plot_curves(tht_tripgen_dir, plots_dir, "tht_tripgen")
+
+    if not args.skip_comparison:
+        print(f"[Pipeline] comparison outputs -> {comparison_dir}")
     return 0
 
 

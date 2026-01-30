@@ -237,10 +237,48 @@ python analyze_spatial.py \
 - `tools/compare_models.py`: compare baseline vs THT-TripGen.
 - `compare_runs.py`: multi-run comparison (adjust the `runs` dict).
 
-**Suggested command (full pipeline)**
+**Full pipeline (dataset → graphs → embeddings → train → eval → comparison)**
+
+This is the recommended **fresh-install** entrypoint (after you have created
+the physical edges CSV in stage 2). It:
+1) Reads the taxi dataset via `load_and_split` / `load_and_split_tht_tripgen`.
+2) Builds Node2Vec embeddings (Efunc/Ephys/Ecomb) if missing.
+3) Trains baseline TVAE + THT-TripGen.
+4) Recomputes metrics and writes comparison tables/plots.
+
+**Suggested command (default: builds embeddings, runs baseline + THT-TripGen)**:
 
 ```bash
 python tools/run_full_pipeline.py --build-embeddings --device cuda
+```
+
+Notes:
+- `--build-embeddings` is optional; the pipeline builds embeddings by default unless `--skip-embeddings` is set.
+
+**THT-TripGen only (skip baseline + comparison)**
+
+```bash
+python tools/run_full_pipeline.py --tht-only --build-embeddings --device cuda
+```
+
+**Skip embeddings build/check (assumes Efunc/Ecomb exist)**
+
+```bash
+python tools/run_full_pipeline.py --skip-embeddings --device cuda
+```
+
+**All optional flags in one example (for reference)**
+
+```bash
+python tools/run_full_pipeline.py \
+  --tht-only \
+  --skip-baseline \
+  --skip-comparison \
+  --skip-embeddings \
+  --skip-plots \
+  --force-train \
+  --force-sample \
+  --device cuda
 ```
 
 **Suggested command (compare two runs)**
