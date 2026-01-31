@@ -13,6 +13,8 @@ def test_tht_tripgen_conditional_cardinalities_keys_match_encoded_columns():
             "dia_da_semana": [0, 3, 5],
             "is_weekend": [0, 0, 1],
             "month": [4, 4, 5],
+            "passenger_count": [1, 2, 1],
+            "total_amount": [11.0, 22.0, 33.0],
         }
     )
 

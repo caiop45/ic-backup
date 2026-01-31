@@ -15,6 +15,8 @@ def _make_idx_df() -> pd.DataFrame:
             "o_idx": [0, 1],
             "d_idx": [1, 0],
             "r": [0.1, 0.2],
+            "passenger_idx": [0, 1],
+            "total_amount_z": [0.0, 0.1],
             "u0": [0, 1],
         }
     )

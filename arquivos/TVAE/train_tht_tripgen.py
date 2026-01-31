@@ -17,9 +17,10 @@ import config
 from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
 from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from models.tht_tripgen import THTTripGenModel
-from utils.evaluation import compute_metrics, compute_paper_metrics
+from utils.evaluation import compute_attribute_metrics, compute_metrics, compute_paper_metrics
 from utils.experiment_logger import ExperimentLogger
 from utils.metrics import compute_fast_metrics, save_metrics_json
+from utils.privacy import build_privacy_report, save_privacy_report
 from utils.serialization import save_checkpoint, save_tht_tripgen_mappings
 
 
@@ -56,6 +57,16 @@ def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
     return metrics_dir, data_dir
 
 
+def _metrics_columns(*dfs: pd.DataFrame) -> List[str]:
+    cols = list(config.OUTPUT_COLUMNS)
+    residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if use_residual and residual_col not in cols:
+        if all(residual_col in df.columns for df in dfs):
+            cols.append(residual_col)
+    return cols
+
+
 def _filter_known(df: pd.DataFrame, transformer: THTTripGenTransformer) -> pd.DataFrame:
     idx = transformer.transform(df, drop_unknown=False)
     mask = idx.notna().all(axis=1) & idx["r"].notna()
@@ -63,17 +74,34 @@ def _filter_known(df: pd.DataFrame, transformer: THTTripGenTransformer) -> pd.Da
 
 
 def _tensor_dataset(
-    df_idx: pd.DataFrame, conditional_cols: List[str]
+    df_idx: pd.DataFrame,
+    conditional_cols: List[str],
+    *,
+    use_passenger_count: bool,
+    use_total_amount: bool,
 ) -> TensorDataset:
     h = torch.from_numpy(df_idx["h_idx"].to_numpy(dtype=np.int64, copy=True))
     o = torch.from_numpy(df_idx["o_idx"].to_numpy(dtype=np.int64, copy=True))
     d = torch.from_numpy(df_idx["d_idx"].to_numpy(dtype=np.int64, copy=True))
     r = torch.from_numpy(df_idx["r"].to_numpy(dtype=np.float32, copy=True))
-    u_tensors = [
-        torch.from_numpy(df_idx[col].to_numpy(dtype=np.int64, copy=True))
-        for col in conditional_cols
-    ]
-    return TensorDataset(h, o, d, r, *u_tensors)
+    tensors: List[torch.Tensor] = [h, o, d, r]
+    if use_passenger_count:
+        tensors.append(
+            torch.from_numpy(
+                df_idx["passenger_idx"].to_numpy(dtype=np.int64, copy=True)
+            )
+        )
+    if use_total_amount:
+        tensors.append(
+            torch.from_numpy(
+                df_idx["total_amount_z"].to_numpy(dtype=np.float32, copy=True)
+            )
+        )
+    for col in conditional_cols:
+        tensors.append(
+            torch.from_numpy(df_idx[col].to_numpy(dtype=np.int64, copy=True))
+        )
+    return TensorDataset(*tensors)
 
 
 def _prepare_loader(
@@ -85,7 +113,12 @@ def _prepare_loader(
     shuffle: bool,
 ) -> DataLoader:
     """Build a DataLoader with CUDA-friendly flags to keep the GPU fed."""
-    dataset = _tensor_dataset(df_idx, conditional_cols)
+    dataset = _tensor_dataset(
+        df_idx,
+        conditional_cols,
+        use_passenger_count=bool(getattr(config, "THT_USE_PASSENGER_COUNT", False)),
+        use_total_amount=bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False)),
+    )
     use_cuda = device.type == "cuda"
     num_workers_cfg = int(getattr(config, "THT_NUM_WORKERS", getattr(config, "NUM_WORKERS", 0)))
     num_workers = num_workers_cfg if use_cuda else 0
@@ -122,12 +155,16 @@ def _epoch_pass(
     log_every: int = 0,
     epoch: int | None = None,
     split_name: str = "train",
+    use_passenger_count: bool = False,
+    use_total_amount: bool = False,
 ) -> Dict[str, float]:
     totals: Dict[str, torch.Tensor] = {
         "nll_h": torch.zeros((), device=device),
         "nll_o": torch.zeros((), device=device),
         "nll_d": torch.zeros((), device=device),
         "nll_r": torch.zeros((), device=device),
+        "nll_passenger": torch.zeros((), device=device),
+        "nll_total_amount": torch.zeros((), device=device),
         "nll_total": torch.zeros((), device=device),
     }
     batches = 0
@@ -139,11 +176,25 @@ def _epoch_pass(
         model.eval()
 
     for batch_idx, batch in enumerate(loader, start=1):
-        h_idx, o_idx, d_idx, r, *u_vals = batch
+        h_idx, o_idx, d_idx, r, *rest = batch
+        passenger_idx = None
+        total_amount_z = None
+        offset = 0
+        if use_passenger_count:
+            passenger_idx = rest[offset]
+            offset += 1
+        if use_total_amount:
+            total_amount_z = rest[offset]
+            offset += 1
+        u_vals = rest[offset:]
         h_idx = h_idx.to(device, non_blocking=non_blocking)
         o_idx = o_idx.to(device, non_blocking=non_blocking)
         d_idx = d_idx.to(device, non_blocking=non_blocking)
         r = r.to(device, non_blocking=non_blocking)
+        if passenger_idx is not None:
+            passenger_idx = passenger_idx.to(device, non_blocking=non_blocking)
+        if total_amount_z is not None:
+            total_amount_z = total_amount_z.to(device, non_blocking=non_blocking)
         u = {
             col: u_vals[i].to(device, non_blocking=non_blocking)
             for i, col in enumerate(conditional_cols)
@@ -153,7 +204,15 @@ def _epoch_pass(
             optimizer.zero_grad(set_to_none=True)
 
         with torch.set_grad_enabled(train):
-            nll = model.nll(u=u, h_idx=h_idx, o_idx=o_idx, d_idx=d_idx, r=r)
+            nll = model.nll(
+                u=u,
+                h_idx=h_idx,
+                o_idx=o_idx,
+                d_idx=d_idx,
+                r=r,
+                passenger_idx=passenger_idx,
+                total_amount_z=total_amount_z,
+            )
             loss = nll["nll_total"]
 
         if train and optimizer is not None:
@@ -180,6 +239,8 @@ def _epoch_pass(
                     "nll_o": float(nll["nll_o"].detach().item()),
                     "nll_d": float(nll["nll_d"].detach().item()),
                     "nll_r": float(nll["nll_r"].detach().item()),
+                    "nll_passenger": float(nll["nll_passenger"].detach().item()),
+                    "nll_total_amount": float(nll["nll_total_amount"].detach().item()),
                 },
                 step=batch_step,
                 prefix=f"{split_name}/batch",
@@ -315,6 +376,28 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
             context_mlp_layers=int(getattr(config, "THT_MODEL_LAYERS", config.THT_MODEL_LAYERS)),
             dropout=float(getattr(config, "THT_MODEL_DROPOUT", config.THT_MODEL_DROPOUT)),
             destination_head_type=str(destination_head_type),
+            hybrid_residual_hidden=int(
+                getattr(config, "THT_HYBRID_RESIDUAL_HIDDEN", config.THT_HYBRID_RESIDUAL_HIDDEN)
+            ),
+            hybrid_residual_weight_init=float(
+                getattr(
+                    config,
+                    "THT_HYBRID_RESIDUAL_WEIGHT_INIT",
+                    config.THT_HYBRID_RESIDUAL_WEIGHT_INIT,
+                )
+            ),
+            use_passenger_count=bool(getattr(config, "THT_USE_PASSENGER_COUNT", False)),
+            passenger_cardinality=transformer.passenger_cardinality
+            if bool(getattr(config, "THT_USE_PASSENGER_COUNT", False))
+            else None,
+            use_total_amount=bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False)),
+            total_amount_sigma_floor=float(
+                getattr(
+                    config,
+                    "THT_TOTAL_AMOUNT_SIGMA_FLOOR",
+                    config.THT_TOTAL_AMOUNT_SIGMA_FLOOR,
+                )
+            ),
             min_r_eps=float(getattr(config, "THT_MIN_R_EPS", config.THT_MIN_R_EPS)),
             residual_num_layers=int(getattr(config, "THT_RESIDUAL_NUM_LAYERS", config.THT_RESIDUAL_NUM_LAYERS)),
             residual_num_bins=int(getattr(config, "THT_RESIDUAL_NUM_BINS", config.THT_RESIDUAL_NUM_BINS)),
@@ -340,6 +423,8 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
         )
 
         batch_size = int(getattr(config, "THT_BATCH_SIZE", 1024))
+        use_passenger_count = bool(getattr(config, "THT_USE_PASSENGER_COUNT", False))
+        use_total_amount = bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False))
         train_loader = _prepare_loader(
             train_idx,
             conditional_cols,
@@ -385,6 +470,8 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                 log_every=log_every,
                 epoch=epoch,
                 split_name="train",
+                use_passenger_count=use_passenger_count,
+                use_total_amount=use_total_amount,
             )
             val_nll = _epoch_pass(
                 model,
@@ -392,6 +479,8 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                 conditional_cols,
                 device,
                 train=False,
+                use_passenger_count=use_passenger_count,
+                use_total_amount=use_total_amount,
             )
 
             loss_rows.append(
@@ -402,11 +491,15 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                     "train_nll_o": train_nll["nll_o"],
                     "train_nll_d": train_nll["nll_d"],
                     "train_nll_r": train_nll["nll_r"],
+                    "train_nll_passenger": train_nll["nll_passenger"],
+                    "train_nll_total_amount": train_nll["nll_total_amount"],
                     "val_nll_total": val_nll["nll_total"],
                     "val_nll_h": val_nll["nll_h"],
                     "val_nll_o": val_nll["nll_o"],
                     "val_nll_d": val_nll["nll_d"],
                     "val_nll_r": val_nll["nll_r"],
+                    "val_nll_passenger": val_nll["nll_passenger"],
+                    "val_nll_total_amount": val_nll["nll_total_amount"],
                 }
             )
 
@@ -417,6 +510,8 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                     "nll_o": train_nll["nll_o"],
                     "nll_d": train_nll["nll_d"],
                     "nll_r": train_nll["nll_r"],
+                    "nll_passenger": train_nll["nll_passenger"],
+                    "nll_total_amount": train_nll["nll_total_amount"],
                 },
                 step=epoch,
                 prefix="train",
@@ -428,6 +523,8 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                     "nll_o": val_nll["nll_o"],
                     "nll_d": val_nll["nll_d"],
                     "nll_r": val_nll["nll_r"],
+                    "nll_passenger": val_nll["nll_passenger"],
+                    "nll_total_amount": val_nll["nll_total_amount"],
                 },
                 step=epoch,
                 prefix="val",
@@ -539,6 +636,26 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
             "context_mlp_layers": int(getattr(config, "THT_MODEL_LAYERS", config.THT_MODEL_LAYERS)),
             "dropout": float(getattr(config, "THT_MODEL_DROPOUT", config.THT_MODEL_DROPOUT)),
             "destination_head_type": str(destination_head_type),
+            "hybrid_residual_hidden": int(
+                getattr(config, "THT_HYBRID_RESIDUAL_HIDDEN", config.THT_HYBRID_RESIDUAL_HIDDEN)
+            ),
+            "hybrid_residual_weight_init": float(
+                getattr(
+                    config,
+                    "THT_HYBRID_RESIDUAL_WEIGHT_INIT",
+                    config.THT_HYBRID_RESIDUAL_WEIGHT_INIT,
+                )
+            ),
+            "use_passenger_count": bool(getattr(config, "THT_USE_PASSENGER_COUNT", False)),
+            "passenger_cardinality": transformer.passenger_cardinality,
+            "use_total_amount": bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False)),
+            "total_amount_sigma_floor": float(
+                getattr(
+                    config,
+                    "THT_TOTAL_AMOUNT_SIGMA_FLOOR",
+                    config.THT_TOTAL_AMOUNT_SIGMA_FLOOR,
+                )
+            ),
             "min_r_eps": float(getattr(config, "THT_MIN_R_EPS", config.THT_MIN_R_EPS)),
             "residual_num_layers": int(getattr(config, "THT_RESIDUAL_NUM_LAYERS", config.THT_RESIDUAL_NUM_LAYERS)),
             "residual_num_bins": int(getattr(config, "THT_RESIDUAL_NUM_BINS", config.THT_RESIDUAL_NUM_BINS)),
@@ -598,8 +715,9 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
             sample_time_min = (time.monotonic() - sample_start) / 60.0
 
             synth_decoded = transformer.decode(synth_idx)
-            synth_metrics_df = synth_decoded[config.OUTPUT_COLUMNS].copy()
-            eval_metrics_df = eval_df_sample[config.OUTPUT_COLUMNS].copy()
+            metrics_cols = _metrics_columns(eval_df_sample, synth_decoded, train_df)
+            synth_metrics_df = synth_decoded[metrics_cols].copy()
+            eval_metrics_df = eval_df_sample[metrics_cols].copy()
 
             metrics: Dict[str, float | str] = compute_metrics(
                 eval_metrics_df,
@@ -608,8 +726,16 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
                 output_dir=metrics_dir,
                 plot_dir=plot_dir,
             )
-            paper_metrics = compute_paper_metrics(train_df, eval_metrics_df, synth_metrics_df)
+            paper_metrics = compute_paper_metrics(train_df, eval_df_sample, synth_decoded)
             metrics.update(paper_metrics)
+            if bool(getattr(config, "EVAL_ENABLE_ATTRIBUTE_METRICS", True)):
+                attr_metrics = compute_attribute_metrics(
+                    eval_df_sample,
+                    synth_decoded,
+                    plot_dir=plot_dir,
+                    order_key=f"tht_tripgen_{split_name}",
+                )
+                metrics.update(attr_metrics)
             metrics["eval_split"] = split_name
             metrics["n_train"] = float(len(train_df))
             metrics["n_eval"] = float(len(eval_metrics_df))
@@ -618,6 +744,33 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
             metrics["train_time_min"] = float(train_time_min)
             metrics["sample_time_min"] = float(sample_time_min)
             metrics["total_time_min"] = float(train_time_min + sample_time_min)
+
+            if bool(getattr(config, "PRIVACY_REPORT_ENABLE", True)):
+                report, match_metrics = build_privacy_report(
+                    train_df,
+                    synth_decoded,
+                    discrete_cols=config.OUTPUT_COLUMNS,
+                    r_col=str(getattr(config, "DISTANCE_RESIDUAL_COL", "r")),
+                    r_decimals=int(getattr(config, "PRIVACY_MATCH_R_DECIMALS", 2)),
+                    max_samples=getattr(config, "DCR_MAX_SAMPLES", None),
+                    seed=config.GLOBAL_SEED,
+                    chunk_size=getattr(config, "DCR_CHUNK_SIZE", 1024),
+                    w_time=getattr(config, "COVERAGE_TIME_WEIGHT", 1.0),
+                    w_space=getattr(config, "COVERAGE_SPACE_WEIGHT", 1.0),
+                    w_residual=getattr(config, "DCR_RESIDUAL_WEIGHT", 1.0),
+                    use_residual=getattr(config, "DISTANCE_USE_RESIDUAL", True),
+                    residual_col=getattr(config, "DISTANCE_RESIDUAL_COL", "r"),
+                )
+                metrics.update(match_metrics)
+                report_path = metrics_dir / f"privacy_report_tht_tripgen_{split_name}.json"
+                save_privacy_report(
+                    report,
+                    report_path,
+                    split=split_name,
+                    n_train=float(len(train_df)),
+                    n_synth=float(len(synth_decoded)),
+                    r_decimals=int(getattr(config, "PRIVACY_MATCH_R_DECIMALS", 2)),
+                )
 
             metrics_path = metrics_dir / f"metrics_tht_tripgen_{split_name}.json"
             save_metrics_json(metrics, metrics_path)

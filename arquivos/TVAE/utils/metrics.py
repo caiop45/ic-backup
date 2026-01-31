@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,81 @@ def _normalize_counts(values: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     if total <= 0:
         return np.zeros_like(values, dtype=np.float64)
     return values.astype(np.float64) / max(total, eps)
+
+
+def safe_log1p(values: np.ndarray | pd.Series) -> np.ndarray:
+    """Safely compute log1p on non-negative values (clip negatives to 0)."""
+    arr = np.asarray(values, dtype=np.float64)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    arr = np.clip(arr, 0.0, None)
+    return np.log1p(arr)
+
+
+def wasserstein_1d_continuous(
+    a: np.ndarray, b: np.ndarray, *, grid_size: int = 1001
+) -> float:
+    """Approximate W1 distance via quantile matching on a fixed grid."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    a = a[np.isfinite(a)]
+    b = b[np.isfinite(b)]
+    if a.size == 0 or b.size == 0:
+        return 0.0
+    qs = np.linspace(0.0, 1.0, int(grid_size), dtype=np.float64)
+    qa = np.quantile(a, qs)
+    qb = np.quantile(b, qs)
+    return float(np.mean(np.abs(qa - qb)))
+
+
+def ks_statistic_1d(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute KS statistic between two 1D samples."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    a = a[np.isfinite(a)]
+    b = b[np.isfinite(b)]
+    if a.size == 0 or b.size == 0:
+        return 0.0
+    a = np.sort(a)
+    b = np.sort(b)
+    values = np.sort(np.concatenate([a, b]))
+    cdf_a = np.searchsorted(a, values, side="right") / float(a.size)
+    cdf_b = np.searchsorted(b, values, side="right") / float(b.size)
+    return float(np.max(np.abs(cdf_a - cdf_b)))
+
+
+def quantile_mae(a: np.ndarray, b: np.ndarray, qs: Sequence[float]) -> float:
+    """Mean absolute error between quantiles of two samples."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    a = a[np.isfinite(a)]
+    b = b[np.isfinite(b)]
+    if a.size == 0 or b.size == 0:
+        return 0.0
+    q = np.array(list(qs), dtype=np.float64)
+    qa = np.quantile(a, q)
+    qb = np.quantile(b, q)
+    return float(np.mean(np.abs(qa - qb)))
+
+
+def median_profile_mae(
+    real_df: pd.DataFrame,
+    synth_df: pd.DataFrame,
+    *,
+    group_col: str,
+    value_col: str,
+) -> float:
+    """MAE between groupwise medians for two datasets (ignore missing groups)."""
+    if real_df.empty or synth_df.empty:
+        return 0.0
+    real = real_df.groupby(group_col)[value_col].median()
+    synth = synth_df.groupby(group_col)[value_col].median()
+    idx = real.index.union(synth.index)
+    real = real.reindex(idx)
+    synth = synth.reindex(idx)
+    mask = real.notna() & synth.notna()
+    if not mask.any():
+        return 0.0
+    return float(np.mean(np.abs(real[mask] - synth[mask])))
 
 
 def _align_counts(
@@ -296,6 +371,32 @@ def plot_marginal_hist(
     plt.close()
 
 
+def plot_continuous_hist(
+    real_vals: np.ndarray,
+    synth_vals: np.ndarray,
+    *,
+    title: str,
+    path: str | Path,
+    bins: int = 40,
+) -> None:
+    real_vals = np.asarray(real_vals, dtype=np.float64)
+    synth_vals = np.asarray(synth_vals, dtype=np.float64)
+    real_vals = real_vals[np.isfinite(real_vals)]
+    synth_vals = synth_vals[np.isfinite(synth_vals)]
+    if real_vals.size == 0 or synth_vals.size == 0:
+        return
+    plt.figure(figsize=(10, 4))
+    plt.hist(real_vals, bins=bins, density=True, alpha=0.6, label="real")
+    plt.hist(synth_vals, bins=bins, density=True, alpha=0.6, label="synth")
+    plt.title(title)
+    plt.tight_layout()
+    plt.legend()
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(path)
+    plt.close()
+
+
 def plot_topk(
     topk_df: pd.DataFrame,
     *,
@@ -407,6 +508,28 @@ def _cyc_dist(a: np.ndarray, b: np.ndarray, period: int) -> np.ndarray:
     return np.minimum(diff, wrap) / (period / 2.0)
 
 
+def _residual_array(df: pd.DataFrame, col: str) -> np.ndarray | None:
+    if col not in df.columns:
+        return None
+    values = df[col].to_numpy(dtype=np.float64)
+    values = np.nan_to_num(values, nan=0.0, posinf=1.0, neginf=0.0)
+    return np.clip(values, 0.0, 1.0)
+
+
+def _passenger_array(df: pd.DataFrame, col: str) -> np.ndarray | None:
+    if col not in df.columns:
+        return None
+    values = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=np.float64)
+    values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+    return values.astype(np.float32)
+
+
+def _fare_array(df: pd.DataFrame, col: str) -> np.ndarray | None:
+    if col not in df.columns:
+        return None
+    return safe_log1p(df[col]).astype(np.float32)
+
+
 def _pairwise_distance(
     a_day: np.ndarray,
     a_hour: np.ndarray,
@@ -419,6 +542,18 @@ def _pairwise_distance(
     *,
     w_time: float,
     w_space: float,
+    w_residual: float = 0.0,
+    a_r: np.ndarray | None = None,
+    b_r: np.ndarray | None = None,
+    w_passenger: float = 0.0,
+    w_fare: float = 0.0,
+    a_pax: np.ndarray | None = None,
+    b_pax: np.ndarray | None = None,
+    a_fare: np.ndarray | None = None,
+    b_fare: np.ndarray | None = None,
+    pax_scale: float = 1.0,
+    fare_scale: float = 1.0,
+    scale_eps: float = 1e-6,
 ) -> np.ndarray:
     day_dist = _cyc_dist(a_day, b_day, period=7)
     hour_dist = _cyc_dist(a_hour, b_hour, period=24)
@@ -428,7 +563,31 @@ def _pairwise_distance(
     dropoff_mismatch = (a_dropoff[:, None] != b_dropoff[None, :]).astype(np.float32)
     space_dist = pickup_mismatch + dropoff_mismatch
 
-    return (w_time * time_dist + w_space * space_dist).astype(np.float32)
+    if w_residual > 0.0 and a_r is not None and b_r is not None:
+        residual_dist = np.abs(a_r[:, None] - b_r[None, :]).astype(np.float32)
+    else:
+        residual_dist = 0.0
+
+    if w_passenger > 0.0 and a_pax is not None and b_pax is not None:
+        denom = max(float(pax_scale), float(scale_eps))
+        passenger_dist = np.abs(a_pax[:, None] - b_pax[None, :]).astype(np.float32) / denom
+    else:
+        passenger_dist = 0.0
+
+    if w_fare > 0.0 and a_fare is not None and b_fare is not None:
+        denom = max(float(fare_scale), float(scale_eps))
+        fare_dist = np.abs(a_fare[:, None] - b_fare[None, :]).astype(np.float32) / denom
+    else:
+        fare_dist = 0.0
+
+    total = (
+        w_time * time_dist
+        + w_space * space_dist
+        + w_residual * residual_dist
+        + w_passenger * passenger_dist
+        + w_fare * fare_dist
+    )
+    return total.astype(np.float32)
 
 
 def distance_matrix(
@@ -437,26 +596,80 @@ def distance_matrix(
     *,
     w_time: float,
     w_space: float,
+    w_residual: float | None = None,
+    use_residual: bool | None = None,
+    residual_col: str | None = None,
+    w_passenger: float | None = None,
+    w_fare: float | None = None,
+    passenger_col: str | None = None,
+    fare_col: str | None = None,
+    pax_scale: float | None = None,
+    fare_scale: float | None = None,
+    scale_eps: float | None = None,
 ) -> np.ndarray:
     """Compute the distance matrix between two datasets.
 
     Distance definition matches coverage_score:
     - time distance: cyclical day (period=7) + hour (period=24)
     - space distance: pickup mismatch (0/1) + dropoff mismatch (0/1)
-    - total = w_time * time_dist + w_space * space_dist
+    - residual distance: |r_i - r_j| when enabled (r expected in [0,1])
+    - total = w_time * time_dist + w_space * space_dist + w_residual * residual_dist
+              + w_passenger * passenger_dist + w_fare * fare_dist
     """
     if a_df.empty or b_df.empty:
         return np.zeros((len(a_df), len(b_df)), dtype=np.float32)
+
+    import config
+
+    if use_residual is None:
+        use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if residual_col is None:
+        residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    if w_residual is None:
+        w_residual = float(getattr(config, "COVERAGE_RESIDUAL_WEIGHT", 1.0))
+    if w_passenger is None:
+        w_passenger = 0.0
+    if w_fare is None:
+        w_fare = 0.0
+    if passenger_col is None:
+        passenger_col = str(getattr(config, "PASSENGER_COL", "passenger_count"))
+    if fare_col is None:
+        fare_col = str(getattr(config, "FARE_COL", "total_amount"))
+    if pax_scale is None:
+        pax_scale = 1.0
+    if fare_scale is None:
+        fare_scale = 1.0
+    if scale_eps is None:
+        scale_eps = float(getattr(config, "DCR_SCALE_EPS", 1e-6))
 
     a_day = a_df["dia_da_semana"].to_numpy(dtype=np.int64)
     a_hour = a_df["hora_do_dia"].to_numpy(dtype=np.int64)
     a_pickup = a_df["pickup_id"].to_numpy(dtype=np.int64)
     a_dropoff = a_df["dropoff_id"].to_numpy(dtype=np.int64)
+    a_r = _residual_array(a_df, residual_col) if use_residual else None
+    a_pax = _passenger_array(a_df, passenger_col) if w_passenger > 0.0 else None
+    a_fare = _fare_array(a_df, fare_col) if w_fare > 0.0 else None
 
     b_day = b_df["dia_da_semana"].to_numpy(dtype=np.int64)
     b_hour = b_df["hora_do_dia"].to_numpy(dtype=np.int64)
     b_pickup = b_df["pickup_id"].to_numpy(dtype=np.int64)
     b_dropoff = b_df["dropoff_id"].to_numpy(dtype=np.int64)
+    b_r = _residual_array(b_df, residual_col) if use_residual else None
+    b_pax = _passenger_array(b_df, passenger_col) if w_passenger > 0.0 else None
+    b_fare = _fare_array(b_df, fare_col) if w_fare > 0.0 else None
+
+    if a_r is None or b_r is None or w_residual <= 0.0:
+        a_r = None
+        b_r = None
+        w_residual = 0.0
+    if a_pax is None or b_pax is None or w_passenger <= 0.0:
+        a_pax = None
+        b_pax = None
+        w_passenger = 0.0
+    if a_fare is None or b_fare is None or w_fare <= 0.0:
+        a_fare = None
+        b_fare = None
+        w_fare = 0.0
 
     return _pairwise_distance(
         a_day,
@@ -469,6 +682,18 @@ def distance_matrix(
         b_dropoff,
         w_time=w_time,
         w_space=w_space,
+        w_residual=w_residual,
+        a_r=a_r,
+        b_r=b_r,
+        w_passenger=w_passenger,
+        w_fare=w_fare,
+        a_pax=a_pax,
+        b_pax=b_pax,
+        a_fare=a_fare,
+        b_fare=b_fare,
+        pax_scale=float(pax_scale),
+        fare_scale=float(fare_scale),
+        scale_eps=float(scale_eps),
     )
 
 
@@ -488,9 +713,48 @@ def coverage_score(
     chunk_size: int,
     w_time: float,
     w_space: float,
+    w_residual: float | None = None,
+    use_residual: bool | None = None,
+    residual_col: str | None = None,
+    w_passenger: float | None = None,
+    w_fare: float | None = None,
+    passenger_col: str | None = None,
+    fare_col: str | None = None,
+    pax_scale: float | None = None,
+    fare_scale: float | None = None,
+    scale_eps: float | None = None,
 ) -> float:
+    """Coverage score based on nearest-neighbor radii in the reference set.
+
+    Distance includes cyclical day/hour, pickup/dropoff mismatch, and optionally
+    residual time r in [0,1], passenger_count, and fare (log1p). Continuous
+    terms are normalized by provided scales.
+    """
     if ref_df.empty or other_df.empty:
         return 0.0
+
+    import config
+
+    if use_residual is None:
+        use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if residual_col is None:
+        residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    if w_residual is None:
+        w_residual = float(getattr(config, "COVERAGE_RESIDUAL_WEIGHT", 1.0))
+    if w_passenger is None:
+        w_passenger = 0.0
+    if w_fare is None:
+        w_fare = 0.0
+    if passenger_col is None:
+        passenger_col = str(getattr(config, "PASSENGER_COL", "passenger_count"))
+    if fare_col is None:
+        fare_col = str(getattr(config, "FARE_COL", "total_amount"))
+    if pax_scale is None:
+        pax_scale = 1.0
+    if fare_scale is None:
+        fare_scale = 1.0
+    if scale_eps is None:
+        scale_eps = float(getattr(config, "DCR_SCALE_EPS", 1e-6))
 
     ref_df = _sample_df(ref_df, max_samples, seed)
     other_df = _sample_df(other_df, max_samples, seed + 1)
@@ -499,11 +763,30 @@ def coverage_score(
     ref_hour = ref_df["hora_do_dia"].to_numpy(dtype=np.int64)
     ref_pickup = ref_df["pickup_id"].to_numpy(dtype=np.int64)
     ref_dropoff = ref_df["dropoff_id"].to_numpy(dtype=np.int64)
+    ref_r = _residual_array(ref_df, residual_col) if use_residual else None
+    ref_pax = _passenger_array(ref_df, passenger_col) if w_passenger > 0.0 else None
+    ref_fare = _fare_array(ref_df, fare_col) if w_fare > 0.0 else None
 
     other_day = other_df["dia_da_semana"].to_numpy(dtype=np.int64)
     other_hour = other_df["hora_do_dia"].to_numpy(dtype=np.int64)
     other_pickup = other_df["pickup_id"].to_numpy(dtype=np.int64)
     other_dropoff = other_df["dropoff_id"].to_numpy(dtype=np.int64)
+    other_r = _residual_array(other_df, residual_col) if use_residual else None
+    other_pax = _passenger_array(other_df, passenger_col) if w_passenger > 0.0 else None
+    other_fare = _fare_array(other_df, fare_col) if w_fare > 0.0 else None
+
+    if ref_r is None or other_r is None or w_residual <= 0.0:
+        ref_r = None
+        other_r = None
+        w_residual = 0.0
+    if ref_pax is None or other_pax is None or w_passenger <= 0.0:
+        ref_pax = None
+        other_pax = None
+        w_passenger = 0.0
+    if ref_fare is None or other_fare is None or w_fare <= 0.0:
+        ref_fare = None
+        other_fare = None
+        w_fare = 0.0
 
     n_ref = len(ref_df)
     if n_ref < 2:
@@ -528,6 +811,18 @@ def coverage_score(
             ref_dropoff,
             w_time=w_time,
             w_space=w_space,
+            w_residual=w_residual,
+            a_r=None if ref_r is None else ref_r[start:end],
+            b_r=ref_r,
+            w_passenger=w_passenger,
+            w_fare=w_fare,
+            a_pax=None if ref_pax is None else ref_pax[start:end],
+            b_pax=ref_pax,
+            a_fare=None if ref_fare is None else ref_fare[start:end],
+            b_fare=ref_fare,
+            pax_scale=float(pax_scale),
+            fare_scale=float(fare_scale),
+            scale_eps=float(scale_eps),
         )
         row_idx = np.arange(start, end)
         dist[np.arange(end - start), row_idx] = np.inf
@@ -548,6 +843,18 @@ def coverage_score(
             other_dropoff,
             w_time=w_time,
             w_space=w_space,
+            w_residual=w_residual,
+            a_r=None if ref_r is None else ref_r[start:end],
+            b_r=other_r,
+            w_passenger=w_passenger,
+            w_fare=w_fare,
+            a_pax=None if ref_pax is None else ref_pax[start:end],
+            b_pax=other_pax,
+            a_fare=None if ref_fare is None else ref_fare[start:end],
+            b_fare=other_fare,
+            pax_scale=float(pax_scale),
+            fare_scale=float(fare_scale),
+            scale_eps=float(scale_eps),
         )
         min_dist = dist.min(axis=1)
         covered += int((min_dist <= radii[start:end]).sum())
@@ -565,15 +872,48 @@ def dcr_quantile(
     seed: int,
     w_time: float,
     w_space: float,
+    w_residual: float | None = None,
+    use_residual: bool | None = None,
+    residual_col: str | None = None,
+    w_passenger: float | None = None,
+    w_fare: float | None = None,
+    passenger_col: str | None = None,
+    fare_col: str | None = None,
+    pax_scale: float | None = None,
+    fare_scale: float | None = None,
+    scale_eps: float | None = None,
 ) -> float:
     """Compute DCR quantile d_alpha between ref_df and other_df.
 
-    DCR (distance to closest record) uses the same distance as coverage_score:
-    cyclical day+hour plus pickup/dropoff mismatch, weighted by w_time/w_space.
-    Sampling is deterministic given the seed.
+    Uses the same distance as coverage_score (time/space + optional residual,
+    passenger_count, and fare). Continuous terms are normalized by provided
+    scales. Sampling is deterministic given the seed.
     """
     if ref_df.empty or other_df.empty:
         return 0.0
+
+    import config
+
+    if use_residual is None:
+        use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if residual_col is None:
+        residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    if w_residual is None:
+        w_residual = float(getattr(config, "DCR_RESIDUAL_WEIGHT", 1.0))
+    if w_passenger is None:
+        w_passenger = 0.0
+    if w_fare is None:
+        w_fare = 0.0
+    if passenger_col is None:
+        passenger_col = str(getattr(config, "PASSENGER_COL", "passenger_count"))
+    if fare_col is None:
+        fare_col = str(getattr(config, "FARE_COL", "total_amount"))
+    if pax_scale is None:
+        pax_scale = 1.0
+    if fare_scale is None:
+        fare_scale = 1.0
+    if scale_eps is None:
+        scale_eps = float(getattr(config, "DCR_SCALE_EPS", 1e-6))
 
     ref_df = _sample_df(ref_df, max_samples, seed)
     other_df = _sample_df(other_df, max_samples, seed + 1)
@@ -587,11 +927,30 @@ def dcr_quantile(
     ref_hour = ref_df["hora_do_dia"].to_numpy(dtype=np.int64)
     ref_pickup = ref_df["pickup_id"].to_numpy(dtype=np.int64)
     ref_dropoff = ref_df["dropoff_id"].to_numpy(dtype=np.int64)
+    ref_r = _residual_array(ref_df, residual_col) if use_residual else None
+    ref_pax = _passenger_array(ref_df, passenger_col) if w_passenger > 0.0 else None
+    ref_fare = _fare_array(ref_df, fare_col) if w_fare > 0.0 else None
 
     oth_day = other_df["dia_da_semana"].to_numpy(dtype=np.int64)
     oth_hour = other_df["hora_do_dia"].to_numpy(dtype=np.int64)
     oth_pickup = other_df["pickup_id"].to_numpy(dtype=np.int64)
     oth_dropoff = other_df["dropoff_id"].to_numpy(dtype=np.int64)
+    oth_r = _residual_array(other_df, residual_col) if use_residual else None
+    oth_pax = _passenger_array(other_df, passenger_col) if w_passenger > 0.0 else None
+    oth_fare = _fare_array(other_df, fare_col) if w_fare > 0.0 else None
+
+    if ref_r is None or oth_r is None or w_residual <= 0.0:
+        ref_r = None
+        oth_r = None
+        w_residual = 0.0
+    if ref_pax is None or oth_pax is None or w_passenger <= 0.0:
+        ref_pax = None
+        oth_pax = None
+        w_passenger = 0.0
+    if ref_fare is None or oth_fare is None or w_fare <= 0.0:
+        ref_fare = None
+        oth_fare = None
+        w_fare = 0.0
 
     n_ref = len(ref_df)
     n_oth = len(other_df)
@@ -611,6 +970,18 @@ def dcr_quantile(
                 oth_dropoff[j:j_end],
                 w_time=w_time,
                 w_space=w_space,
+                w_residual=w_residual,
+                a_r=None if ref_r is None else ref_r[start:end],
+                b_r=None if oth_r is None else oth_r[j:j_end],
+                w_passenger=w_passenger,
+                w_fare=w_fare,
+                a_pax=None if ref_pax is None else ref_pax[start:end],
+                b_pax=None if oth_pax is None else oth_pax[j:j_end],
+                a_fare=None if ref_fare is None else ref_fare[start:end],
+                b_fare=None if oth_fare is None else oth_fare[j:j_end],
+                pax_scale=float(pax_scale),
+                fare_scale=float(fare_scale),
+                scale_eps=float(scale_eps),
             )
             min_chunk = dist.min(axis=1)
             if chunk_min is None:
@@ -635,14 +1006,48 @@ def dcr_within_quantile(
     seed: int,
     w_time: float,
     w_space: float,
+    w_residual: float | None = None,
+    use_residual: bool | None = None,
+    residual_col: str | None = None,
+    w_passenger: float | None = None,
+    w_fare: float | None = None,
+    passenger_col: str | None = None,
+    fare_col: str | None = None,
+    pax_scale: float | None = None,
+    fare_scale: float | None = None,
+    scale_eps: float | None = None,
 ) -> float:
     """Compute within-set DCR quantile excluding self-matches.
 
-    Uses the same distance as coverage_score. Self-matches are excluded by
-    setting the diagonal to +inf for same-chunk comparisons.
+    Uses the same distance as coverage_score (including optional residual,
+    passenger_count, and fare). Self-matches are excluded by setting the
+    diagonal to +inf for same-chunk comparisons.
     """
     if len(df) < 2:
         return 0.0
+
+    import config
+
+    if use_residual is None:
+        use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if residual_col is None:
+        residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    if w_residual is None:
+        w_residual = float(getattr(config, "DCR_RESIDUAL_WEIGHT", 1.0))
+    if w_passenger is None:
+        w_passenger = 0.0
+    if w_fare is None:
+        w_fare = 0.0
+    if passenger_col is None:
+        passenger_col = str(getattr(config, "PASSENGER_COL", "passenger_count"))
+    if fare_col is None:
+        fare_col = str(getattr(config, "FARE_COL", "total_amount"))
+    if pax_scale is None:
+        pax_scale = 1.0
+    if fare_scale is None:
+        fare_scale = 1.0
+    if scale_eps is None:
+        scale_eps = float(getattr(config, "DCR_SCALE_EPS", 1e-6))
 
     df = _sample_df(df, max_samples, seed)
     if len(df) < 2:
@@ -655,6 +1060,19 @@ def dcr_within_quantile(
     ref_hour = df["hora_do_dia"].to_numpy(dtype=np.int64)
     ref_pickup = df["pickup_id"].to_numpy(dtype=np.int64)
     ref_dropoff = df["dropoff_id"].to_numpy(dtype=np.int64)
+    ref_r = _residual_array(df, residual_col) if use_residual else None
+    ref_pax = _passenger_array(df, passenger_col) if w_passenger > 0.0 else None
+    ref_fare = _fare_array(df, fare_col) if w_fare > 0.0 else None
+
+    if ref_r is None or w_residual <= 0.0:
+        ref_r = None
+        w_residual = 0.0
+    if ref_pax is None or w_passenger <= 0.0:
+        ref_pax = None
+        w_passenger = 0.0
+    if ref_fare is None or w_fare <= 0.0:
+        ref_fare = None
+        w_fare = 0.0
 
     n_ref = len(df)
     for start in range(0, n_ref, chunk_size):
@@ -673,6 +1091,18 @@ def dcr_within_quantile(
                 ref_dropoff[j:j_end],
                 w_time=w_time,
                 w_space=w_space,
+                w_residual=w_residual,
+                a_r=None if ref_r is None else ref_r[start:end],
+                b_r=None if ref_r is None else ref_r[j:j_end],
+                w_passenger=w_passenger,
+                w_fare=w_fare,
+                a_pax=None if ref_pax is None else ref_pax[start:end],
+                b_pax=None if ref_pax is None else ref_pax[j:j_end],
+                a_fare=None if ref_fare is None else ref_fare[start:end],
+                b_fare=None if ref_fare is None else ref_fare[j:j_end],
+                pax_scale=float(pax_scale),
+                fare_scale=float(fare_scale),
+                scale_eps=float(scale_eps),
             )
             if start == j:
                 diag_len = min(end - start, j_end - j)
@@ -698,6 +1128,9 @@ def rdcr(
     seed: int,
     w_time: float,
     w_space: float,
+    w_residual: float | None = None,
+    use_residual: bool | None = None,
+    residual_col: str | None = None,
     eps: float,
 ) -> float:
     """Compute rDCR ratio d_alpha(train,synth) / d_alpha(hold,synth)."""
@@ -710,6 +1143,9 @@ def rdcr(
         seed=seed,
         w_time=w_time,
         w_space=w_space,
+        w_residual=w_residual,
+        use_residual=use_residual,
+        residual_col=residual_col,
     )
     d_hold = dcr_quantile(
         hold_df,
@@ -720,5 +1156,8 @@ def rdcr(
         seed=seed,
         w_time=w_time,
         w_space=w_space,
+        w_residual=w_residual,
+        use_residual=use_residual,
+        residual_col=residual_col,
     )
     return float(d_tr / max(d_hold, eps))

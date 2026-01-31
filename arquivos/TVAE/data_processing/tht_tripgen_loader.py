@@ -86,6 +86,10 @@ def _tht_tripgen_columns() -> List[str]:
         cols.append("is_weekend")
     if config.THT_USE_MONTH and "month" not in cols:
         cols.append("month")
+    if config.THT_USE_PASSENGER_COUNT and "passenger_count" not in cols:
+        cols.append("passenger_count")
+    if config.THT_USE_TOTAL_AMOUNT and "total_amount" not in cols:
+        cols.append("total_amount")
 
     return cols
 
@@ -112,6 +116,17 @@ def load_raw_data_tht_tripgen() -> pd.DataFrame:
     df["pickup_id"] = df[config.PICKUP_ID_COL].astype("int64")
     df["dropoff_id"] = df[config.DROPOFF_ID_COL].astype("int64")
 
+    if config.THT_USE_PASSENGER_COUNT:
+        raw_col = str(getattr(config, "THT_PASSENGER_COUNT_COL_RAW", "passenger_count"))
+        if raw_col not in df.columns:
+            raise ValueError(f"Missing passenger_count column: {raw_col}")
+        df["passenger_count"] = pd.to_numeric(df[raw_col], errors="coerce")
+    if config.THT_USE_TOTAL_AMOUNT:
+        raw_col = str(getattr(config, "THT_TOTAL_AMOUNT_COL_RAW", "total_amount"))
+        if raw_col not in df.columns:
+            raise ValueError(f"Missing total_amount column: {raw_col}")
+        df["total_amount"] = pd.to_numeric(df[raw_col], errors="coerce")
+
     if config.THT_USE_WEEKEND:
         df["is_weekend"] = (df["dia_da_semana"] >= 5).astype("int64")
     if config.THT_USE_MONTH:
@@ -120,6 +135,10 @@ def load_raw_data_tht_tripgen() -> pd.DataFrame:
     keep_cols = [config.DATETIME_COL] + _tht_tripgen_columns()
     df = df[keep_cols]
     df = df.dropna(subset=_tht_tripgen_columns())
+    if config.THT_USE_PASSENGER_COUNT:
+        df["passenger_count"] = df["passenger_count"].astype("int64")
+    if config.THT_USE_TOTAL_AMOUNT:
+        df["total_amount"] = df["total_amount"].astype("float64")
 
     return df
 

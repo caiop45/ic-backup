@@ -11,6 +11,8 @@ def test_tht_tripgen_shared_zone_vocab_union():
             "pickup_id": [1, 2, 2],
             "dropoff_id": [2, 3, 3],
             "dia_da_semana": [0, 1, 2],
+            "passenger_count": [1, 2, 1],
+            "total_amount": [8.0, 9.0, 10.0],
         }
     )
 

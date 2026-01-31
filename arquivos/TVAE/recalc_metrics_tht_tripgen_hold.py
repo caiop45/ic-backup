@@ -12,8 +12,9 @@ import config
 from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
 from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from sample_tht_tripgen import sample_tht_tripgen
-from utils.evaluation import compute_metrics, compute_paper_metrics
+from utils.evaluation import compute_attribute_metrics, compute_metrics, compute_paper_metrics
 from utils.metrics import save_metrics_json
+from utils.privacy import build_privacy_report, save_privacy_report
 from utils.serialization import (
     THT_TRIPGEN_CHECKPOINT_FILENAME,
     THT_TRIPGEN_MAPPINGS_FILENAME,
@@ -47,6 +48,16 @@ def _choose_split(
     if split == "hold" and len(hold_df) == 0:
         return "val", val_df
     return split, hold_df if split == "hold" else val_df
+
+
+def _metrics_columns(*dfs: pd.DataFrame) -> list[str]:
+    cols = list(config.OUTPUT_COLUMNS)
+    residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if use_residual and residual_col not in cols:
+        if all(residual_col in df.columns for df in dfs):
+            cols.append(residual_col)
+    return cols
 
 
 def main() -> int:
@@ -129,6 +140,7 @@ def main() -> int:
             rows=n_eval,
             temperature=args.temperature,
             seed=args.seed,
+            privacy_report=False,
         )
         elapsed_min = (time.monotonic() - start) / 60.0
         print(f"[Recalc THT-TripGen] sampled {n_eval} rows in {elapsed_min:.2f} min")
@@ -141,8 +153,9 @@ def main() -> int:
             random_state=args.seed if args.seed is not None else config.GLOBAL_SEED,
         ).reset_index(drop=True)
 
-    eval_metrics_df = eval_df[config.OUTPUT_COLUMNS].copy()
-    synth_metrics_df = synth_df[config.OUTPUT_COLUMNS].copy()
+    metrics_cols = _metrics_columns(train_df, eval_df, synth_df)
+    eval_metrics_df = eval_df[metrics_cols].copy()
+    synth_metrics_df = synth_df[metrics_cols].copy()
 
     plot_dir = args.plot_dir or (run_dir / "plots")
     metrics = compute_metrics(
@@ -154,15 +167,52 @@ def main() -> int:
     )
 
     paper_metrics = compute_paper_metrics(
-        train_df[config.OUTPUT_COLUMNS],
-        eval_metrics_df,
-        synth_metrics_df,
+        train_df,
+        eval_df,
+        synth_df,
         include_within=args.include_within_dcr,
     )
     metrics.update(paper_metrics)
+    if bool(getattr(config, "EVAL_ENABLE_ATTRIBUTE_METRICS", True)):
+        metrics.update(
+            compute_attribute_metrics(
+                eval_df,
+                synth_df,
+                plot_dir=plot_dir,
+                order_key=f"tht_tripgen_{split_name}",
+            )
+        )
     metrics["eval_split"] = split_name
     metrics["n_real"] = float(len(eval_metrics_df))
     metrics["n_synth"] = float(len(synth_metrics_df))
+
+    if bool(getattr(config, "PRIVACY_REPORT_ENABLE", True)):
+        report, match_metrics = build_privacy_report(
+            train_df,
+            synth_df,
+            discrete_cols=config.OUTPUT_COLUMNS,
+            r_col=str(getattr(config, "DISTANCE_RESIDUAL_COL", "r")),
+            r_decimals=int(getattr(config, "PRIVACY_MATCH_R_DECIMALS", 2)),
+            max_samples=getattr(config, "DCR_MAX_SAMPLES", None),
+            seed=args.seed if args.seed is not None else config.GLOBAL_SEED,
+            chunk_size=getattr(config, "DCR_CHUNK_SIZE", 1024),
+            w_time=getattr(config, "COVERAGE_TIME_WEIGHT", 1.0),
+            w_space=getattr(config, "COVERAGE_SPACE_WEIGHT", 1.0),
+            w_residual=getattr(config, "DCR_RESIDUAL_WEIGHT", 1.0),
+            use_residual=getattr(config, "DISTANCE_USE_RESIDUAL", True),
+            residual_col=getattr(config, "DISTANCE_RESIDUAL_COL", "r"),
+        )
+        metrics.update(match_metrics)
+        report_dir = run_dir / "metrics"
+        report_path = report_dir / f"privacy_report_tht_tripgen_{split_name}.json"
+        save_privacy_report(
+            report,
+            report_path,
+            split=split_name,
+            n_train=float(len(train_df)),
+            n_synth=float(len(synth_df)),
+            r_decimals=int(getattr(config, "PRIVACY_MATCH_R_DECIMALS", 2)),
+        )
 
     if args.output is None:
         if split_name == "val":

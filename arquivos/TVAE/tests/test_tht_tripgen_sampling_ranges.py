@@ -24,6 +24,10 @@ def test_tht_tripgen_sampling_ranges():
         context_mlp_hidden=16,
         context_mlp_layers=2,
         dropout=0.0,
+        use_passenger_count=False,
+        passenger_cardinality=None,
+        use_total_amount=False,
+        total_amount_sigma_floor=1e-4,
     )
 
     sample_a = model.sample(100, seed=123)

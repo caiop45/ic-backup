@@ -11,6 +11,8 @@ def test_tht_tripgen_transformer_drop_unknown():
             "pickup_id": [1, 2],
             "dropoff_id": [2, 1],
             "dia_da_semana": [0, 1],
+            "passenger_count": [1, 2],
+            "total_amount": [12.0, 24.0],
         }
     )
     val_df = pd.DataFrame(
@@ -20,6 +22,8 @@ def test_tht_tripgen_transformer_drop_unknown():
             "pickup_id": [1, 99],
             "dropoff_id": [2, 1],
             "dia_da_semana": [0, 1],
+            "passenger_count": [1, 2],
+            "total_amount": [13.0, 25.0],
         }
     )
 

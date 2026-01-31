@@ -38,6 +38,12 @@ class THTTripGenCheckpointMeta(TypedDict):
     context_mlp_layers: NotRequired[int]
     dropout: NotRequired[float]
     destination_head_type: NotRequired[str]
+    hybrid_residual_hidden: NotRequired[int]
+    hybrid_residual_weight_init: NotRequired[float]
+    use_passenger_count: NotRequired[bool]
+    passenger_cardinality: NotRequired[int]
+    use_total_amount: NotRequired[bool]
+    total_amount_sigma_floor: NotRequired[float]
     min_r_eps: NotRequired[float]
     residual_num_layers: NotRequired[int]
     residual_num_bins: NotRequired[int]
@@ -81,6 +87,14 @@ def save_tht_tripgen_mappings(
         "min_r_eps": state.min_r_eps,
         "use_weekend": state.use_weekend,
         "use_month": state.use_month,
+        "use_passenger_count": state.use_passenger_count,
+        "use_total_amount": state.use_total_amount,
+        "passenger_categories": state.passenger_categories,
+        "total_amount_mu": state.total_amount_mu,
+        "total_amount_sigma": state.total_amount_sigma,
+        "total_amount_clip_lo": state.total_amount_clip_lo,
+        "total_amount_clip_hi": state.total_amount_clip_hi,
+        "total_amount_log1p": state.total_amount_log1p,
     }
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,11 +112,22 @@ def load_tht_tripgen_mappings(path: str | Path) -> THTTripGenTransformer:
         min_r_eps=payload["min_r_eps"],
         use_weekend=payload["use_weekend"],
         use_month=payload["use_month"],
+        use_passenger_count=payload.get("use_passenger_count", False),
+        use_total_amount=payload.get("use_total_amount", False),
+        passenger_categories=payload.get("passenger_categories", []),
+        total_amount_mu=payload.get("total_amount_mu"),
+        total_amount_sigma=payload.get("total_amount_sigma"),
+        total_amount_clip_lo=payload.get("total_amount_clip_lo"),
+        total_amount_clip_hi=payload.get("total_amount_clip_hi"),
+        total_amount_log1p=payload.get("total_amount_log1p", True),
     )
     transformer = THTTripGenTransformer(
         min_r_eps=state.min_r_eps,
         use_weekend=state.use_weekend,
         use_month=state.use_month,
+        use_passenger_count=state.use_passenger_count,
+        use_total_amount=state.use_total_amount,
+        total_amount_log1p=state.total_amount_log1p,
     )
     transformer.load_state_dict(state)
     return transformer
@@ -188,6 +213,9 @@ def build_tht_tripgen_model_from_checkpoint(state: Dict[str, Any]) -> THTTripGen
         value = meta.get(key)
         return default if value is None else value
 
+    use_passenger_count = bool(meta.get("use_passenger_count", False))
+    use_total_amount = bool(meta.get("use_total_amount", False))
+
     model = THTTripGenModel(
         num_zones=int(num_zones),
         num_time_bins=int(num_time_bins),
@@ -203,6 +231,24 @@ def build_tht_tripgen_model_from_checkpoint(state: Dict[str, Any]) -> THTTripGen
         dropout=float(_meta_or_default("dropout", config.THT_MODEL_DROPOUT)),
         destination_head_type=str(
             _meta_or_default("destination_head_type", config.THT_DEST_HEAD_TYPE)
+        ),
+        hybrid_residual_hidden=int(
+            _meta_or_default("hybrid_residual_hidden", config.THT_HYBRID_RESIDUAL_HIDDEN)
+        ),
+        hybrid_residual_weight_init=float(
+            _meta_or_default(
+                "hybrid_residual_weight_init", config.THT_HYBRID_RESIDUAL_WEIGHT_INIT
+            )
+        ),
+        use_passenger_count=use_passenger_count,
+        passenger_cardinality=(
+            int(_meta_or_default("passenger_cardinality", 0)) if use_passenger_count else None
+        ),
+        use_total_amount=use_total_amount,
+        total_amount_sigma_floor=float(
+            _meta_or_default(
+                "total_amount_sigma_floor", config.THT_TOTAL_AMOUNT_SIGMA_FLOOR
+            )
         ),
         min_r_eps=float(_meta_or_default("min_r_eps", config.THT_MIN_R_EPS)),
         residual_num_layers=int(

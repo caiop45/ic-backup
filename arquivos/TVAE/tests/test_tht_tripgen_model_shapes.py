@@ -24,6 +24,10 @@ def test_tht_tripgen_model_shapes():
         context_mlp_hidden=16,
         context_mlp_layers=2,
         dropout=0.0,
+        use_passenger_count=False,
+        passenger_cardinality=None,
+        use_total_amount=False,
+        total_amount_sigma_floor=1e-4,
     )
 
     batch = 6

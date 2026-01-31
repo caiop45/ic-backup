@@ -12,6 +12,8 @@ def test_tht_tripgen_transformer_decode_roundtrip():
             "pickup_id": [1, 2, 3],
             "dropoff_id": [3, 2, 1],
             "dia_da_semana": [0, 3, 6],
+            "passenger_count": [1, 2, 1],
+            "total_amount": [10.0, 20.0, 30.0],
         }
     )
 
@@ -35,4 +37,21 @@ def test_tht_tripgen_transformer_decode_roundtrip():
     )
     pdt.assert_series_equal(
         decoded["r"], df["r"].reset_index(drop=True).astype("float32"), check_dtype=False
+    )
+    pdt.assert_series_equal(
+        decoded["passenger_count"],
+        df["passenger_count"].reset_index(drop=True),
+        check_dtype=False,
+    )
+    clip_lo = transformer.total_amount_clip_lo
+    clip_hi = transformer.total_amount_clip_hi
+    expected_amount = df["total_amount"].copy()
+    if clip_lo is not None:
+        expected_amount = expected_amount.clip(lower=clip_lo)
+    if clip_hi is not None:
+        expected_amount = expected_amount.clip(upper=clip_hi)
+    pdt.assert_series_equal(
+        decoded["total_amount"].round(4),
+        expected_amount.reset_index(drop=True).round(4),
+        check_dtype=False,
     )

@@ -1,18 +1,75 @@
 import pandas as pd
 import pytest
 
+pytest.importorskip("torch")
 
-torch = pytest.importorskip("torch")
-
-from models.tht_tripgen import THTTripGenModel
-from utils.serialization import save_checkpoint, save_tht_tripgen_mappings
-
-import config
-import sample_tht_tripgen
-from data_processing.tht_tripgen_transformer import THTTripGenTransformer
+from utils.privacy import exact_match_rate, exact_match_rate_with_r
 
 
-def test_sample_tht_tripgen_outputs_csv(tmp_path, monkeypatch):
+def test_exact_match_rate_basic():
+    train_df = pd.DataFrame(
+        {
+            "dia_da_semana": [0, 1],
+            "hora_do_dia": [5, 6],
+            "pickup_id": [10, 11],
+            "dropoff_id": [20, 21],
+        }
+    )
+    synth_same = train_df.copy()
+    synth_diff = pd.DataFrame(
+        {
+            "dia_da_semana": [2, 3],
+            "hora_do_dia": [7, 8],
+            "pickup_id": [12, 13],
+            "dropoff_id": [22, 23],
+        }
+    )
+
+    cols = ["dia_da_semana", "hora_do_dia", "pickup_id", "dropoff_id"]
+    assert exact_match_rate(train_df, synth_same, cols) == 1.0
+    assert exact_match_rate(train_df, synth_diff, cols) == 0.0
+
+
+def test_exact_match_rate_with_r_rounding():
+    train_df = pd.DataFrame(
+        {
+            "dia_da_semana": [0, 1],
+            "hora_do_dia": [5, 6],
+            "pickup_id": [10, 11],
+            "dropoff_id": [20, 21],
+            "r": [0.1234, 0.5678],
+        }
+    )
+    synth_df = pd.DataFrame(
+        {
+            "dia_da_semana": [0, 1],
+            "hora_do_dia": [5, 6],
+            "pickup_id": [10, 11],
+            "dropoff_id": [20, 21],
+            "r": [0.1249, 0.5601],
+        }
+    )
+
+    cols = ["dia_da_semana", "hora_do_dia", "pickup_id", "dropoff_id"]
+    rate_2 = exact_match_rate_with_r(
+        train_df, synth_df, cols, r_col="r", decimals=2
+    )
+    rate_3 = exact_match_rate_with_r(
+        train_df, synth_df, cols, r_col="r", decimals=3
+    )
+
+    assert rate_2 == 1.0
+    assert rate_3 == 0.0
+
+
+def test_sample_tht_tripgen_privacy_report(tmp_path, monkeypatch):
+    torch = pytest.importorskip("torch")
+
+    import sample_tht_tripgen
+    from data_processing.tht_tripgen_transformer import THTTripGenTransformer
+    from models.tht_tripgen import THTTripGenModel
+    from utils.serialization import save_checkpoint, save_tht_tripgen_mappings
+
     df = pd.DataFrame(
         {
             "hora_do_dia": [0, 1, 2, 3],
@@ -109,9 +166,9 @@ def test_sample_tht_tripgen_outputs_csv(tmp_path, monkeypatch):
         temperature=1.0,
         seed=123,
         device=torch.device("cpu"),
+        privacy_report=True,
     )
 
     assert out_path.exists()
-    out_df = pd.read_csv(out_path)
-    assert list(out_df.columns) == config.THT_TRIPGEN_COLUMNS
-    assert len(out_df) == 1
+    report_path = run_dir / "metrics" / "privacy_report_tht_tripgen_val.json"
+    assert report_path.exists()

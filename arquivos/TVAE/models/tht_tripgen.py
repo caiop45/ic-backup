@@ -1,10 +1,14 @@
 """THT-TripGen discrete generator: p(h|u) p(o|h,u) p(d|o,h,u).
 
-Embedding-softmax for destination uses frozen zone embeddings E (no gradients).
+Destination head options:
+- embedding_softmax: projection into frozen zone embedding space.
+- linear: free linear logits over zones.
+- hybrid: embedding_softmax logits plus a learned residual logits head.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Dict, Iterable, List, Tuple
 
 import torch
@@ -45,10 +49,81 @@ def _make_mlp(
     return nn.Sequential(*modules)
 
 
+class EmbeddingSoftmaxHead(nn.Module):
+    """Embedding-softmax logits using frozen zone embeddings."""
+
+    def __init__(self, ctx_dim: int, *, emb_dim: int, num_zones: int) -> None:
+        super().__init__()
+        self.proj = nn.Linear(ctx_dim, emb_dim, bias=False)
+        self.bias = nn.Parameter(torch.zeros(num_zones))
+
+    def forward(self, ctx: torch.Tensor, zone_embeddings: torch.Tensor) -> torch.Tensor:
+        return self.proj(ctx) @ zone_embeddings.t() + self.bias
+
+
+class LinearDestinationHead(nn.Module):
+    """Unconstrained linear logits over zones."""
+
+    def __init__(self, ctx_dim: int, *, num_zones: int) -> None:
+        super().__init__()
+        self.linear = nn.Linear(ctx_dim, num_zones)
+
+    def forward(self, ctx: torch.Tensor, zone_embeddings: torch.Tensor | None = None) -> torch.Tensor:
+        _ = zone_embeddings
+        return self.linear(ctx)
+
+
+class HybridDestinationHead(nn.Module):
+    """Embedding-softmax logits plus a learned residual logits head."""
+
+    def __init__(
+        self,
+        ctx_dim: int,
+        *,
+        emb_dim: int,
+        num_zones: int,
+        residual_hidden: int,
+        dropout: float,
+        residual_weight_init: float,
+    ) -> None:
+        super().__init__()
+        self.embed_head = EmbeddingSoftmaxHead(ctx_dim, emb_dim=emb_dim, num_zones=num_zones)
+        if residual_hidden > 0:
+            self.residual_mlp = _make_mlp(ctx_dim, residual_hidden, layers=1, dropout=dropout)
+            self.residual_out = nn.Linear(residual_hidden, num_zones)
+        else:
+            self.residual_mlp = nn.Identity()
+            self.residual_out = nn.Linear(ctx_dim, num_zones)
+        self.residual_scale = nn.Parameter(torch.tensor(float(residual_weight_init)))
+
+    def forward(self, ctx: torch.Tensor, zone_embeddings: torch.Tensor) -> torch.Tensor:
+        base = self.embed_head(ctx, zone_embeddings)
+        residual = self.residual_out(self.residual_mlp(ctx))
+        return base + self.residual_scale * residual
+
+
+def _normalize_destination_head_type(value: str) -> str:
+    name = value.strip().lower()
+    if name in ("free_logits", "linear"):
+        return "linear"
+    if name in ("embedding_softmax", "hybrid"):
+        return name
+    raise ValueError("destination_head_type must be 'embedding_softmax', 'linear', or 'hybrid'")
+
+
 class THTTripGenModel(nn.Module):
     """THT-TripGen model implementing time-first factorization.
 
     p(h|u) p(o|h,u) p(d|o,h,u)
+
+    Destination heads:
+    - embedding_softmax
+    - linear
+    - hybrid
+
+    Optional attribute heads:
+    - passenger_count (categorical)
+    - total_amount (continuous, standardized)
     """
 
     def __init__(
@@ -65,6 +140,12 @@ class THTTripGenModel(nn.Module):
         context_mlp_layers: int = config.THT_MODEL_LAYERS,
         dropout: float = config.THT_MODEL_DROPOUT,
         destination_head_type: str = config.THT_DEST_HEAD_TYPE,
+        hybrid_residual_hidden: int = config.THT_HYBRID_RESIDUAL_HIDDEN,
+        hybrid_residual_weight_init: float = config.THT_HYBRID_RESIDUAL_WEIGHT_INIT,
+        use_passenger_count: bool = config.THT_USE_PASSENGER_COUNT,
+        passenger_cardinality: int | None = None,
+        use_total_amount: bool = config.THT_USE_TOTAL_AMOUNT,
+        total_amount_sigma_floor: float = config.THT_TOTAL_AMOUNT_SIGMA_FLOOR,
         min_r_eps: float = config.THT_MIN_R_EPS,
         residual_num_layers: int = config.THT_RESIDUAL_NUM_LAYERS,
         residual_num_bins: int = config.THT_RESIDUAL_NUM_BINS,
@@ -84,8 +165,7 @@ class THTTripGenModel(nn.Module):
             raise ValueError("frozen_zone_embeddings must be a 2D tensor")
         if int(frozen_zone_embeddings.shape[0]) != int(num_zones):
             raise ValueError("frozen_zone_embeddings row count must match num_zones")
-        if destination_head_type not in ("embedding_softmax", "free_logits"):
-            raise ValueError("destination_head_type must be 'embedding_softmax' or 'free_logits'")
+        destination_head_type = _normalize_destination_head_type(destination_head_type)
 
         self.num_zones = int(num_zones)
         self.num_time_bins = int(num_time_bins)
@@ -94,6 +174,9 @@ class THTTripGenModel(nn.Module):
         }
         self.destination_head_type = destination_head_type
         self.min_r_eps = float(min_r_eps)
+        self.use_passenger_count = bool(use_passenger_count)
+        self.use_total_amount = bool(use_total_amount)
+        self.total_amount_sigma_floor = float(total_amount_sigma_floor)
 
         self.conditional_names = list(self.conditional_cardinalities.keys())
         self.conditional_idx_names = [
@@ -130,15 +213,28 @@ class THTTripGenModel(nn.Module):
             frozen_zone_embeddings.detach().clone().to(dtype=torch.float32),
             persistent=True,
         )
-
         if destination_head_type == "embedding_softmax":
             self.dest_project = nn.Linear(context_mlp_hidden, emb_dim, bias=False)
             self.dest_bias = nn.Parameter(torch.zeros(self.num_zones))
             self.dest_free = None
+            self.dest_hybrid = None
+        elif destination_head_type == "hybrid":
+            self.dest_project = None
+            self.dest_bias = None
+            self.dest_free = None
+            self.dest_hybrid = HybridDestinationHead(
+                context_mlp_hidden,
+                emb_dim=emb_dim,
+                num_zones=self.num_zones,
+                residual_hidden=int(hybrid_residual_hidden),
+                dropout=float(dropout),
+                residual_weight_init=float(hybrid_residual_weight_init),
+            )
         else:
             self.dest_project = None
             self.dest_bias = None
             self.dest_free = nn.Linear(context_mlp_hidden, self.num_zones)
+            self.dest_hybrid = None
 
         residual_input_dim = u_dim + time_emb_dim + origin_emb_dim + emb_dim
         self.residual_mlp = _make_mlp(
@@ -153,6 +249,20 @@ class THTTripGenModel(nn.Module):
             min_derivative=residual_min_deriv,
             eps=residual_eps,
         )
+
+        if self.use_passenger_count:
+            if passenger_cardinality is None or int(passenger_cardinality) <= 0:
+                raise ValueError("passenger_cardinality must be positive when enabled")
+            self.passenger_head = nn.Linear(
+                residual_context_hidden, int(passenger_cardinality)
+            )
+        else:
+            self.passenger_head = None
+
+        if self.use_total_amount:
+            self.amount_head = nn.Linear(residual_context_hidden, 2)
+        else:
+            self.amount_head = None
 
     def _normalize_u(self, u: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         normalized: Dict[str, torch.Tensor] = {}
@@ -202,6 +312,10 @@ class THTTripGenModel(nn.Module):
         if self.destination_head_type == "embedding_softmax":
             proj = self.dest_project(d_ctx)
             logits_d = proj @ self.zone_embeddings.t() + self.dest_bias
+        elif self.destination_head_type == "hybrid":
+            if self.dest_hybrid is None:
+                raise RuntimeError("Hybrid destination head not initialized")
+            logits_d = self.dest_hybrid(d_ctx, self.zone_embeddings)
         else:
             logits_d = self.dest_free(d_ctx)
 
@@ -219,6 +333,8 @@ class THTTripGenModel(nn.Module):
         o_idx: torch.Tensor,
         d_idx: torch.Tensor,
         r: torch.Tensor,
+        passenger_idx: torch.Tensor | None = None,
+        total_amount_z: torch.Tensor | None = None,
     ) -> Dict[str, torch.Tensor]:
         logits = self.forward(u=u, h_idx=h_idx, o_idx=o_idx, d_idx=d_idx)
 
@@ -236,12 +352,38 @@ class THTTripGenModel(nn.Module):
         log_prob_r = self.residual_flow.log_prob(r, residual_ctx)
         nll_r = -log_prob_r.mean()
 
-        total = nll_h + nll_o + nll_d + nll_r
+        if self.use_passenger_count:
+            if passenger_idx is None:
+                raise ValueError("passenger_idx is required when passenger_count is enabled")
+            logits_pass = self.passenger_head(residual_ctx)
+            nll_passenger = F.cross_entropy(
+                logits_pass, _ensure_1d_long(passenger_idx, "passenger_idx")
+            )
+        else:
+            nll_passenger = torch.zeros((), device=nll_h.device)
+
+        if self.use_total_amount:
+            if total_amount_z is None:
+                raise ValueError("total_amount_z is required when total_amount is enabled")
+            params = self.amount_head(residual_ctx)
+            mu = params[:, 0]
+            log_sigma = params[:, 1]
+            sigma = F.softplus(log_sigma) + self.total_amount_sigma_floor
+            z = total_amount_z.to(dtype=torch.float32)
+            log_term = torch.log(sigma)
+            quad = 0.5 * ((z - mu) / sigma).pow(2)
+            nll_total_amount = (0.5 * math.log(2.0 * math.pi) + log_term + quad).mean()
+        else:
+            nll_total_amount = torch.zeros((), device=nll_h.device)
+
+        total = nll_h + nll_o + nll_d + nll_r + nll_passenger + nll_total_amount
         return {
             "nll_h": nll_h,
             "nll_o": nll_o,
             "nll_d": nll_d,
             "nll_r": nll_r,
+            "nll_passenger": nll_passenger,
+            "nll_total_amount": nll_total_amount,
             "nll_total": total,
         }
 
@@ -390,6 +532,10 @@ class THTTripGenModel(nn.Module):
             if self.destination_head_type == "embedding_softmax":
                 proj = self.dest_project(d_ctx)
                 logits_d = proj @ self.zone_embeddings.t() + self.dest_bias
+            elif self.destination_head_type == "hybrid":
+                if self.dest_hybrid is None:
+                    raise RuntimeError("Hybrid destination head not initialized")
+                logits_d = self.dest_hybrid(d_ctx, self.zone_embeddings)
             else:
                 logits_d = self.dest_free(d_ctx)
             d_tensor = self._sample_from_logits(
@@ -406,6 +552,27 @@ class THTTripGenModel(nn.Module):
                 "d_idx": d_tensor,
                 "r": r,
             }
+
+            if self.use_passenger_count:
+                if self.passenger_head is None:
+                    raise RuntimeError("Passenger head not initialized")
+                logits_pass = self.passenger_head(residual_ctx)
+                passenger_idx = self._sample_from_logits(
+                    logits_pass, temperature, generator=generator
+                )
+                output["passenger_idx"] = passenger_idx
+
+            if self.use_total_amount:
+                if self.amount_head is None:
+                    raise RuntimeError("Amount head not initialized")
+                params = self.amount_head(residual_ctx)
+                mu = params[:, 0]
+                log_sigma = params[:, 1]
+                sigma = F.softplus(log_sigma) + self.total_amount_sigma_floor
+                eps = torch.randn(mu.shape, device=mu.device, generator=generator)
+                total_amount_z = mu + sigma * eps
+                output["total_amount_z"] = total_amount_z
+
             for idx_name in self.conditional_idx_names:
                 output[idx_name] = u[idx_name]
 
