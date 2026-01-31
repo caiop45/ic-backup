@@ -8,6 +8,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 import config
+import recalc_downstream_tht_tripgen
 import recalc_metrics_hold
 import recalc_metrics_tht_tripgen_hold
 import train_tht_tripgen
@@ -63,6 +64,11 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
         "load_and_split_tht_tripgen",
         lambda: (sa_train, sa_val, sa_hold),
     )
+    monkeypatch.setattr(
+        recalc_downstream_tht_tripgen,
+        "load_and_split_tht_tripgen",
+        lambda: (sa_train, sa_val, sa_hold),
+    )
 
     cache_dir = tmp_path / "topology_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +107,12 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
         "--comparison-dir",
         str(comparison_dir),
         "--force-train",
+        "--downstream-train-rows",
+        "50",
+        "--downstream-test-rows",
+        "50",
+        "--downstream-model",
+        "linear",
     ]
     monkeypatch.setattr(sys, "argv", argv)
 
@@ -110,3 +122,6 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
     assert table_path.exists()
     table = pd.read_csv(table_path)
     assert set(table["model"].tolist()) == {"baseline", "tht_tripgen"}
+
+    downstream_path = strategy_dir / "metrics" / "downstream_tht_tripgen_hold.json"
+    assert downstream_path.exists()

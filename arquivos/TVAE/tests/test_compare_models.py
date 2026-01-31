@@ -40,6 +40,8 @@ def test_compare_models_table_columns_order():
     df = build_metrics_table(baseline_metrics, strategy_metrics)
 
     assert list(df.columns) == DEFAULT_COLUMNS
+    assert "dwn_fare_syn_te_r2" in DEFAULT_COLUMNS
+    assert "dwn_fare_syn_te_mae" in DEFAULT_COLUMNS
     assert len(df) == 2
     assert df.loc[0, "model"] == "baseline"
     assert df.loc[1, "model"] == "tht_tripgen"

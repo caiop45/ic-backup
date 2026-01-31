@@ -16,11 +16,15 @@ JSON schema (top-level):
   "dwn_fare_syn_tr": {...},
   "dwn_fare_syn_te": {...},
   "dwn_fare_syn_syn": {...}
+  "dwn_fare_tr_te_r2": float | None,
+  "dwn_fare_tr_te_mae": float | None,
+  "dwn_fare_syn_te_r2": float | None,
+  "dwn_fare_syn_te_mae": float | None
 }
 """
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import math
 import numpy as np
@@ -49,6 +53,14 @@ BASE_FEATURE_COLS: tuple[str, ...] = (
 )
 OPTIONAL_FEATURE_COLS: tuple[str, ...] = ("r", "passenger_count")
 LABEL_COL = "total_amount"
+_DOWNSTREAM_PREFIXES: tuple[str, ...] = (
+    "dwn_fare_tr_tr",
+    "dwn_fare_tr_te",
+    "dwn_fare_tr_syn",
+    "dwn_fare_syn_tr",
+    "dwn_fare_syn_te",
+    "dwn_fare_syn_syn",
+)
 
 
 @dataclass(frozen=True)
@@ -139,6 +151,32 @@ def _regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, flo
     }
 
 
+def _flatten_nested_metrics(
+    prefix: str, payload: dict[str, float] | None
+) -> dict[str, float | None]:
+    if not payload:
+        return {
+            f"{prefix}_r2": None,
+            f"{prefix}_r2_x100": None,
+            f"{prefix}_mae": None,
+            f"{prefix}_rmse": None,
+        }
+    flat: dict[str, float | None] = {}
+    for key, value in payload.items():
+        flat[f"{prefix}_{key}"] = float(value) if value is not None else None
+    return flat
+
+
+def _flatten_downstream_metrics(metrics: dict[str, object]) -> dict[str, object]:
+    for prefix in _DOWNSTREAM_PREFIXES:
+        nested = metrics.get(prefix)
+        if isinstance(nested, dict):
+            metrics.update(_flatten_nested_metrics(prefix, nested))
+        else:
+            metrics.update(_flatten_nested_metrics(prefix, None))
+    return metrics
+
+
 def _fit_and_eval(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -174,11 +212,12 @@ def compute_downstream_fare_metrics(
 ) -> dict[str, object]:
     """Compute downstream fare regression metrics with real/synth train/test combos."""
     if not _SKLEARN_AVAILABLE:
-        return {
+        metrics: dict[str, object] = {
             "skipped_fare": True,
             "skip_reason": "sklearn_missing",
             "eval_split": inputs.eval_split,
         }
+        return _flatten_downstream_metrics(metrics)
 
     if seed is None:
         seed = int(getattr(config, "GLOBAL_SEED", 0))
@@ -191,33 +230,36 @@ def compute_downstream_fare_metrics(
     if label_col not in inputs.synth_df.columns:
         missing.append(label_col)
     if missing:
-        return {
+        metrics = {
             "skipped_fare": True,
             "skip_reason": f"missing_columns:{','.join(sorted(set(missing)))}",
             "eval_split": inputs.eval_split,
         }
+        return _flatten_downstream_metrics(metrics)
 
     train_df = _clean_df(inputs.train_df, feature_cols, label_col)
     eval_df = _clean_df(inputs.eval_df, feature_cols, label_col)
     synth_df = _clean_df(inputs.synth_df, feature_cols, label_col)
 
     if len(train_df) == 0 or len(eval_df) == 0 or len(synth_df) == 0:
-        return {
+        metrics = {
             "skipped_fare": True,
             "skip_reason": "empty_after_filter",
             "eval_split": inputs.eval_split,
         }
+        return _flatten_downstream_metrics(metrics)
 
     train_df = _subsample_df(train_df, train_rows, seed)
     eval_df = _subsample_df(eval_df, test_rows, seed + 1)
     synth_df = _subsample_df(synth_df, test_rows, seed + 2)
 
     if len(train_df) < 2 or len(eval_df) < 2 or len(synth_df) < 2:
-        return {
+        metrics = {
             "skipped_fare": True,
             "skip_reason": "insufficient_rows",
             "eval_split": inputs.eval_split,
         }
+        return _flatten_downstream_metrics(metrics)
 
     metrics: dict[str, object] = {
         "skipped_fare": False,
@@ -276,4 +318,4 @@ def compute_downstream_fare_metrics(
         model_name=model_name,
         seed=seed,
     )
-    return metrics
+    return _flatten_downstream_metrics(metrics)

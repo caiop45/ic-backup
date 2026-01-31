@@ -59,6 +59,8 @@ def test_downstream_fare_eval_metrics_present():
     )
 
     assert metrics["skipped_fare"] is False
+    assert "dwn_fare_syn_te_r2" in metrics
+    assert "dwn_fare_syn_te_mae" in metrics
     for key in (
         "dwn_fare_tr_tr",
         "dwn_fare_tr_te",

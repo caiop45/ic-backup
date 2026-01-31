@@ -27,11 +27,30 @@ DEFAULT_COLUMNS = [
     "rdcr_p05",
     "dcr_rr_p05",
     "dcr_ss_p05",
+    "dwn_fare_tr_te_r2",
+    "dwn_fare_tr_te_mae",
+    "dwn_fare_syn_te_r2",
+    "dwn_fare_syn_te_mae",
 ]
 
 
 def _load_metrics(path: Path) -> Dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _merge_downstream_metrics(
+    strategy_metrics: Dict[str, object], run_dir: Path
+) -> None:
+    split = strategy_metrics.get("eval_split")
+    if split not in ("val", "hold"):
+        return
+    ds_path = run_dir / "metrics" / f"downstream_tht_tripgen_{split}.json"
+    if not ds_path.exists():
+        return
+    ds_metrics = _load_metrics(ds_path)
+    for key, value in ds_metrics.items():
+        if key not in strategy_metrics:
+            strategy_metrics[key] = value
 
 
 def build_metrics_table(
@@ -132,6 +151,7 @@ def main() -> int:
 
     baseline_metrics = _load_metrics(baseline_metrics_path)
     strategy_metrics = _load_metrics(strategy_metrics_path)
+    _merge_downstream_metrics(strategy_metrics, args.tht_tripgen_run)
 
     df = build_metrics_table(
         baseline_metrics,

@@ -19,6 +19,7 @@ import train_tvae
 from tools import compare_models, plot_training_curves
 from utils.helpers import set_seed
 
+import recalc_downstream_tht_tripgen
 import recalc_metrics_hold
 import recalc_metrics_tht_tripgen_hold
 import tools.build_tht_zone_embeddings as build_tht_zone_embeddings
@@ -134,6 +135,34 @@ def _recalc_tht_tripgen(run_dir: Path, force_sample: bool) -> None:
     _call_main(recalc_metrics_tht_tripgen_hold, args)
 
 
+def _recalc_downstream_tht_tripgen(
+    run_dir: Path,
+    *,
+    split: str,
+    train_rows: int,
+    test_rows: int,
+    model: str,
+    seed: int | None,
+) -> None:
+    """Run downstream fare evaluation for a THT-TripGen run."""
+    args = [
+        "recalc_downstream_tht_tripgen.py",
+        "--run-dir",
+        str(run_dir),
+        "--split",
+        split,
+        "--train-rows",
+        str(train_rows),
+        "--test-rows",
+        str(test_rows),
+        "--model",
+        model,
+    ]
+    if seed is not None:
+        args += ["--seed", str(seed)]
+    _call_main(recalc_downstream_tht_tripgen, args)
+
+
 def _compare_runs(baseline_dir: Path, tht_tripgen_dir: Path, out_dir: Path) -> None:
     args = [
         "compare_models.py",
@@ -201,6 +230,43 @@ def main() -> int:
         action="store_true",
         help="Skip training curve plots.",
     )
+    parser.add_argument(
+        "--skip-downstream",
+        action="store_true",
+        help="Skip downstream fare evaluation for THT-TripGen.",
+    )
+    parser.add_argument(
+        "--downstream-split",
+        type=str,
+        choices=["val", "hold"],
+        default="hold",
+        help="Split to evaluate downstream fare metrics.",
+    )
+    parser.add_argument(
+        "--downstream-train-rows",
+        type=int,
+        default=40000,
+        help="Max rows for downstream training set.",
+    )
+    parser.add_argument(
+        "--downstream-test-rows",
+        type=int,
+        default=20000,
+        help="Max rows for downstream evaluation sets.",
+    )
+    parser.add_argument(
+        "--downstream-model",
+        type=str,
+        choices=["gbr", "hgbr", "linear"],
+        default="gbr",
+        help="Model type for downstream fare prediction.",
+    )
+    parser.add_argument(
+        "--downstream-seed",
+        type=int,
+        default=None,
+        help="Seed for downstream sampling/training.",
+    )
     parser.add_argument("--comparison-dir", type=Path, default=None)
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
@@ -250,6 +316,15 @@ def main() -> int:
     if not args.skip_baseline:
         _recalc_baseline(baseline_dir, args.force_sample)
     _recalc_tht_tripgen(tht_tripgen_dir, args.force_sample)
+    if not args.skip_downstream:
+        _recalc_downstream_tht_tripgen(
+            tht_tripgen_dir,
+            split=args.downstream_split,
+            train_rows=args.downstream_train_rows,
+            test_rows=args.downstream_test_rows,
+            model=args.downstream_model,
+            seed=args.downstream_seed,
+        )
 
     if args.skip_baseline and not args.skip_comparison:
         print("[Pipeline] baseline skipped; comparison disabled")
