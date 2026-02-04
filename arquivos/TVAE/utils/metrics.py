@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Dict, Iterable, List, Tuple
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,82 @@ def _normalize_counts(values: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     if total <= 0:
         return np.zeros_like(values, dtype=np.float64)
     return values.astype(np.float64) / max(total, eps)
+
+def dummify(
+    X: np.ndarray, *, cat_indexes: List[int], divide_by: float = 0.0, drop_first: bool = False
+) -> Tuple[np.ndarray, List[str], List[str]]:
+    df = pd.DataFrame(X, columns=[str(i) for i in range(X.shape[1])])
+    df_names_before = list(df.columns)
+    for i in cat_indexes:
+        df = pd.get_dummies(
+            df,
+            columns=[str(i)],
+            prefix=str(i),
+            dtype="float",
+            drop_first=drop_first,
+        )
+        if divide_by > 0:
+            filter_col = [col for col in df if col.startswith(str(i) + "_")]
+            df[filter_col] = df[filter_col] / divide_by
+    df_names_after = list(df.columns)
+    return df.to_numpy(), df_names_before, df_names_after
+
+
+def minmax_scale_dummy(
+    X_train: np.ndarray,
+    X_test: np.ndarray,
+    cat_indexes: List[int] | None = None,
+    mask: np.ndarray | None = None,
+    *,
+    divide_by: float = 2.0,
+) -> Tuple[np.ndarray, np.ndarray, object, List[str] | None, List[str] | None]:
+    if cat_indexes is None:
+        cat_indexes = []
+
+    # Avoid mutating caller data
+    X_train_ = np.array(X_train, dtype=np.float64, copy=True)
+    X_test_ = np.array(X_test, dtype=np.float64, copy=True)
+
+    # Lazy import to keep dependencies optional
+    try:
+        from sklearn.preprocessing import MinMaxScaler
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError("minmax_scale_dummy requires scikit-learn") from exc
+
+    # Continuous scaling
+    scaler = MinMaxScaler()
+    if len(cat_indexes) != X_train_.shape[1]:
+        not_cat_indexes = [i for i in range(X_train_.shape[1]) if i not in cat_indexes]
+        scaler.fit(X_train_[:, not_cat_indexes])
+        X_train_[:, not_cat_indexes] = scaler.transform(X_train_[:, not_cat_indexes])
+        X_test_[:, not_cat_indexes] = scaler.transform(X_test_[:, not_cat_indexes])
+
+    # One-hot categorical variables (>=3 categories)
+    df_names_before = None
+    df_names_after = None
+    n = X_train.shape[0]
+    if len(cat_indexes) > 0:
+        X_train_test, df_names_before, df_names_after = dummify(
+            np.concatenate((X_train_, X_test_), axis=0),
+            cat_indexes=cat_indexes,
+            divide_by=divide_by,
+        )
+        X_train_ = X_train_test[0:n, :]
+        X_test_ = X_train_test[n:, :]
+
+    if mask is not None:
+        if len(cat_indexes) == 0:
+            return X_train_, X_test_, mask, scaler, df_names_before, df_names_after
+        mask_new = np.zeros(X_train_.shape)
+        for i, var_name in enumerate(df_names_after or []):
+            if "_" in var_name:
+                var_ind = int(var_name.split("_")[0])
+            else:
+                var_ind = int(var_name)
+            mask_new[:, i] = mask[:, var_ind]
+        return X_train_, X_test_, mask_new, scaler, df_names_before, df_names_after
+
+    return X_train_, X_test_, scaler, df_names_before, df_names_after
 
 
 def _align_counts(
@@ -454,3 +532,316 @@ def coverage_score(
         covered += int((min_dist <= radii[start:end]).sum())
 
     return float(100.0 * covered / max(1, n_ref))
+
+
+# --- Paper-aligned metrics (PRDC coverage + EMD L1) ---
+def compute_pairwise_distance(
+    data_x: np.ndarray, data_y: np.ndarray | None = None
+) -> np.ndarray:
+    try:
+        from sklearn.metrics import pairwise_distances
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError("compute_pairwise_distance requires scikit-learn") from exc
+    if data_y is None:
+        data_y = data_x
+    return pairwise_distances(data_x, data_y, metric="cityblock", n_jobs=-1)
+
+
+def _get_kth_value(unsorted: np.ndarray, k: int, axis: int = -1) -> np.ndarray:
+    indices = np.argpartition(unsorted, k, axis=axis)[..., :k]
+    k_smallests = np.take_along_axis(unsorted, indices, axis=axis)
+    return k_smallests.max(axis=axis)
+
+
+def _nearest_neighbour_distances(
+    input_features: np.ndarray, nearest_k: int
+) -> np.ndarray:
+    distances = compute_pairwise_distance(input_features)
+    radii = _get_kth_value(distances, k=nearest_k + 1, axis=-1)
+    return radii
+
+
+def _get_prdc_runtime_config() -> Tuple[bool, str, int]:
+    use_torch = True
+    device = "cuda"
+    chunk_size = 2048
+    try:
+        import config as runtime_config  # local import to avoid hard dependency
+
+        use_torch = bool(getattr(runtime_config, "PRDC_USE_TORCH", use_torch))
+        device = str(getattr(runtime_config, "PRDC_DEVICE", device))
+        chunk_size = int(getattr(runtime_config, "PRDC_TORCH_CHUNK_SIZE", chunk_size))
+    except Exception:
+        pass
+    return use_torch, device, max(1, chunk_size)
+
+
+def _select_auto_k(
+    real_features: np.ndarray, *, target_coverage: float = 0.95
+) -> Tuple[int, float]:
+    n_real = int(real_features.shape[0])
+    if n_real < 2:
+        return 0, 0.0
+
+    _, inverse, counts = np.unique(
+        real_features, axis=0, return_inverse=True, return_counts=True
+    )
+    duplicate_size_per_row = counts[inverse]
+    max_k = n_real - 1
+
+    for k in range(1, max_k + 1):
+        cov_rr = float(np.mean(duplicate_size_per_row <= k))
+        if cov_rr >= target_coverage:
+            return k, cov_rr
+
+    return max_k, float(np.mean(duplicate_size_per_row <= max_k))
+
+
+def _coverage_prdc_sklearn(
+    real_features: np.ndarray, fake_features: np.ndarray, nearest_k: int
+) -> float:
+    real_nearest = _nearest_neighbour_distances(real_features, nearest_k)
+    distance_real_fake = compute_pairwise_distance(real_features, fake_features)
+    coverage = (distance_real_fake.min(axis=1) < real_nearest).mean()
+    return float(coverage)
+
+
+def _resolve_torch_device(requested_device: str):
+    import torch
+
+    requested_device = (requested_device or "cuda").strip()
+    try:
+        device = torch.device(requested_device)
+    except Exception:
+        warnings.warn(
+            f"[PRDC] Invalid PRDC_DEVICE='{requested_device}'. Falling back to CPU.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return torch.device("cpu")
+
+    if device.type == "cuda" and not torch.cuda.is_available():
+        warnings.warn(
+            "[PRDC] CUDA requested for PRDC but not available. Falling back to CPU.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return torch.device("cpu")
+    return device
+
+
+def _torch_chunked_kth_radii(
+    features: "torch.Tensor", nearest_k: int, chunk_size: int
+) -> "torch.Tensor":
+    import torch
+
+    n_samples = int(features.shape[0])
+    nearest_k = int(min(max(1, nearest_k), n_samples - 1))
+    radii = torch.empty((n_samples,), dtype=features.dtype, device=features.device)
+    n_row_chunks = max(1, (n_samples + chunk_size - 1) // chunk_size)
+    n_col_chunks = n_row_chunks
+    progress_every = max(1, n_row_chunks // 10)
+    print(
+        f"[PRDC] real-real knn radii: n={n_samples} k={nearest_k} "
+        f"row_chunks={n_row_chunks} col_chunks={n_col_chunks}"
+    )
+
+    row_chunk_idx = 0
+    for row_start in range(0, n_samples, chunk_size):
+        row_chunk_idx += 1
+        row_end = min(n_samples, row_start + chunk_size)
+        query = features[row_start:row_end]
+        best = torch.full(
+            (row_end - row_start, nearest_k),
+            float("inf"),
+            dtype=features.dtype,
+            device=features.device,
+        )
+
+        for col_start in range(0, n_samples, chunk_size):
+            col_end = min(n_samples, col_start + chunk_size)
+            ref = features[col_start:col_end]
+
+            dist_block = torch.cdist(query, ref, p=1)
+
+            if col_start < row_end and col_end > row_start:
+                overlap_start = max(row_start, col_start)
+                overlap_end = min(row_end, col_end)
+                diag = torch.arange(overlap_start, overlap_end, device=features.device)
+                dist_block[diag - row_start, diag - col_start] = float("inf")
+
+            merged = torch.cat((best, dist_block), dim=1)
+            best = torch.topk(merged, k=nearest_k, dim=1, largest=False).values
+
+        radii[row_start:row_end] = best[:, -1]
+        if (
+            row_chunk_idx == 1
+            or row_chunk_idx == n_row_chunks
+            or row_chunk_idx % progress_every == 0
+        ):
+            print(
+                f"[PRDC] real-real knn radii progress: "
+                f"{row_chunk_idx}/{n_row_chunks} rows"
+            )
+
+    return radii
+
+
+def _torch_chunked_min_distances(
+    ref_features: "torch.Tensor", other_features: "torch.Tensor", chunk_size: int
+) -> "torch.Tensor":
+    import torch
+
+    n_ref = int(ref_features.shape[0])
+    n_other = int(other_features.shape[0])
+    min_dist = torch.empty((n_ref,), dtype=ref_features.dtype, device=ref_features.device)
+    n_row_chunks = max(1, (n_ref + chunk_size - 1) // chunk_size)
+    n_col_chunks = max(1, (n_other + chunk_size - 1) // chunk_size)
+    progress_every = max(1, n_row_chunks // 10)
+    print(
+        f"[PRDC] real-fake min-dist: n_real={n_ref} n_fake={n_other} "
+        f"row_chunks={n_row_chunks} col_chunks={n_col_chunks}"
+    )
+
+    row_chunk_idx = 0
+    for row_start in range(0, n_ref, chunk_size):
+        row_chunk_idx += 1
+        row_end = min(n_ref, row_start + chunk_size)
+        query = ref_features[row_start:row_end]
+        query_min = torch.full(
+            (row_end - row_start,),
+            float("inf"),
+            dtype=ref_features.dtype,
+            device=ref_features.device,
+        )
+
+        for col_start in range(0, n_other, chunk_size):
+            col_end = min(n_other, col_start + chunk_size)
+            ref = other_features[col_start:col_end]
+            dist_block = torch.cdist(query, ref, p=1)
+            query_min = torch.minimum(query_min, dist_block.min(dim=1).values)
+
+        min_dist[row_start:row_end] = query_min
+        if (
+            row_chunk_idx == 1
+            or row_chunk_idx == n_row_chunks
+            or row_chunk_idx % progress_every == 0
+        ):
+            print(
+                f"[PRDC] real-fake min-dist progress: "
+                f"{row_chunk_idx}/{n_row_chunks} rows"
+            )
+
+    return min_dist
+
+
+def _coverage_prdc_torch(
+    real_features: np.ndarray,
+    fake_features: np.ndarray,
+    nearest_k: int,
+    *,
+    device: str,
+    chunk_size: int,
+) -> Tuple[float, str]:
+    import torch
+
+    torch_device = _resolve_torch_device(device)
+    real_t = torch.as_tensor(real_features, dtype=torch.float32, device=torch_device)
+    fake_t = torch.as_tensor(fake_features, dtype=torch.float32, device=torch_device)
+
+    real_nearest = _torch_chunked_kth_radii(real_t, nearest_k=nearest_k, chunk_size=chunk_size)
+    distance_real_fake = _torch_chunked_min_distances(
+        real_t, fake_t, chunk_size=chunk_size
+    )
+    coverage = float((distance_real_fake < real_nearest).float().mean().item())
+
+    if torch_device.type == "cuda":
+        torch.cuda.synchronize(torch_device)
+
+    return coverage, str(torch_device)
+
+
+def compute_coverage_prdc(
+    real_features: np.ndarray, fake_features: np.ndarray, nearest_k: int | None = None
+) -> float:
+    real_features = np.asarray(real_features)
+    fake_features = np.asarray(fake_features)
+
+    if real_features.size == 0 or fake_features.size == 0:
+        return 0.0
+
+    n_real = int(real_features.shape[0])
+    if n_real < 2:
+        return 0.0
+
+    use_torch, requested_device, chunk_size = _get_prdc_runtime_config()
+    started = time.perf_counter()
+
+    auto_k = nearest_k is None
+    if auto_k:
+        auto_k_features = real_features.astype(np.float32, copy=False) if use_torch else real_features
+        nearest_k, coverage_rr = _select_auto_k(auto_k_features, target_coverage=0.95)
+    else:
+        nearest_k = int(nearest_k)
+        coverage_rr = float("nan")
+
+    nearest_k = int(min(max(1, nearest_k), n_real - 1))
+
+    backend = "sklearn"
+    device_used = "cpu"
+    try:
+        if use_torch:
+            coverage, device_used = _coverage_prdc_torch(
+                real_features,
+                fake_features,
+                nearest_k,
+                device=requested_device,
+                chunk_size=chunk_size,
+            )
+            backend = "torch"
+        else:
+            coverage = _coverage_prdc_sklearn(real_features, fake_features, nearest_k)
+    except Exception as exc:
+        if use_torch:
+            backend_name = "CUDA" if requested_device.lower().startswith("cuda") else "torch"
+            warnings.warn(
+                f"[PRDC] {backend_name} backend failed ({exc}). Falling back to sklearn CPU.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            coverage = _coverage_prdc_sklearn(real_features, fake_features, nearest_k)
+            backend = "sklearn"
+            device_used = "cpu"
+        else:
+            raise
+
+    elapsed_s = time.perf_counter() - started
+    if auto_k:
+        print(
+            f"[PRDC] backend={backend} device={device_used} chunk_size={chunk_size} "
+            f"auto_k={nearest_k} coverage_rr={coverage_rr:.4f} time_s={elapsed_s:.3f}"
+        )
+    else:
+        print(
+            f"[PRDC] backend={backend} device={device_used} chunk_size={chunk_size} "
+            f"k={nearest_k} time_s={elapsed_s:.3f}"
+        )
+
+    return float(coverage)
+
+
+def emd_l1_distance(a: np.ndarray, b: np.ndarray) -> float:
+    try:
+        import ot as pot
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError("emd_l1_distance requires POT (pip install POT)") from exc
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    return float(
+        pot.emd2(
+            pot.unif(a.shape[0]),
+            pot.unif(b.shape[0]),
+            M=pot.dist(a, b, metric="cityblock"),
+            numItermax = 1000000
+        )
+    )

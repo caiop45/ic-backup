@@ -4,24 +4,34 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 # Data paths
-REAL_DATA_PATH = "/home-ext/caioloss/Dados/viagens_lat_long.parquet"
-DATETIME_COL = "tpep_pickup_datetime"
+# REAL_DATA_PATH = "/home-ext/caioloss/Dados/viagens_lat_long.parquet"
+REAL_DATA_PATH = "/home/caioloss/arquivos/transportation/dataset/tracrData/green_tripdata_2019-03.parquet"
+# DATETIME_COL = "tpep_pickup_datetime"
+DATETIME_COL = "lpep_pickup_datetime"
 PICKUP_ID_COL = "PULocationID"
 DROPOFF_ID_COL = "DOLocationID"
 
-# Time filters
-FILTER_YEAR = 2024
-FILTER_MONTHS = [4, 5]
-FILTER_DOW_MIN = 0
-FILTER_DOW_MAX = 5
+# Time filters (comentados para usar todos os dados de março)
+# FILTER_YEAR = 2024
+FILTER_YEAR = None
+# FILTER_MONTHS = [4, 5]
+FILTER_MONTHS = []
+# FILTER_DOW_MIN = 0
+# FILTER_DOW_MAX = 5
+FILTER_DOW_MIN = None
+FILTER_DOW_MAX = None
+# FILTER_START_DATE = None
 FILTER_START_DATE = None
+# FILTER_END_DATE = None
 FILTER_END_DATE = None
 
-# Split fractions (70% treino, 30% teste)
+# Split fractions (hold vazio)
 # Com TRAIN_FRAC + VAL_FRAC = 1.0, o hold_df fica vazio e val_df é usado como teste
 # O modelo usa val_df tanto para early stopping quanto para avaliação final
+# TRAIN_FRAC = 0.70
+# VAL_FRAC = 0.15
 TRAIN_FRAC = 0.70
-VAL_FRAC = 0.15; TRAIN_FRAC = 0.35
+VAL_FRAC = 0.30
 
 # Model hyperparameters
 ENCODER_HIDDEN_DIMS = (256, 128)
@@ -62,9 +72,21 @@ EVAL_SAMPLE_RATIO = 1.0  # 100% do teste para comparação equivalente
 MAX_EVAL_SAMPLES = None
 
 # Paper metrics
+# Modo equivalente ao artigo:
+# - Graph Similarity usa dataset completo (sem cap)
+# - W1 e Coverage usam cap de 20k por split (MAXNUM do paper)
+PAPER_MAX_SAMPLES = 20000
+PAPER_GRAPH_USE_FULL_DATA = True
+PAPER_SAMPLE_SEED = None  # None para manter comportamento não determinístico do paper
+
+# PRDC Coverage backend
+PRDC_USE_TORCH = True
+PRDC_DEVICE = "cuda"  # fallback automatico para CPU
+PRDC_TORCH_CHUNK_SIZE = 2048
+
 # TIME_KEY_CARDINALITY = 6 * 24 porque domingo (dia 6) está excluído pelo filtro FILTER_DOW_MAX=5
-TIME_KEY_CARDINALITY = 6 * 24
-TIME_PERIOD_DOW = 6  # Dias 0-5 (seg-sáb)
+TIME_KEY_CARDINALITY = 7 * 24
+TIME_PERIOD_DOW = 7  # Dias 0-6 (seg-dom)
 TIME_PERIOD_HOUR = 24
 COVERAGE_K = 5
 COVERAGE_MAX_SAMPLES = 100000

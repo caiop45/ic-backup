@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
@@ -20,19 +21,20 @@ from models.tvae_ar import TVAEAutoregressive
 from utils.helpers import set_seed
 from utils.metrics import (
     chi2_counts,
-    coverage_score,
+    compute_coverage_prdc,
+    emd_l1_distance,
     graph_similarity_score,
     joint_counts,
     joint_metrics,
     jsd_counts,
     marginal_counts,
+    minmax_scale_dummy,
     od_metrics,
     plot_marginal_hist,
     plot_topk,
     save_metrics_json,
     time_metrics,
     topk_table,
-    wasserstein_time,
 )
 from utils.serialization import save_checkpoint, save_mappings
 
@@ -49,6 +51,44 @@ class Tee:
     def flush(self) -> None:
         for s in self.streams:
             s.flush()
+
+warnings.filterwarnings(
+    "ignore",
+    message="`sklearn.utils.parallel.delayed` should be used",
+)
+
+def _log_stage(stage: str) -> None:
+    print(f"[Stage] {stage}")
+
+def _print_df_sanity(name: str, df: pd.DataFrame) -> None:
+    print(f"[Sanity:{name}] rows={len(df)} cols={list(df.columns)}")
+    missing = [c for c in config.OUTPUT_COLUMNS if c not in df.columns]
+    extra = [c for c in df.columns if c not in config.OUTPUT_COLUMNS]
+    if missing:
+        print(f"[Sanity:{name}] missing_cols={missing}")
+    if extra:
+        print(f"[Sanity:{name}] extra_cols={extra}")
+    for col in config.OUTPUT_COLUMNS:
+        if col not in df.columns:
+            continue
+        series = df[col]
+        n_null = int(series.isna().sum())
+        n_unique = int(series.nunique())
+        min_val = series.min() if len(series) else None
+        max_val = series.max() if len(series) else None
+        print(
+            f"[Sanity:{name}] {col} dtype={series.dtype} unique={n_unique} "
+            f"nulls={n_null} min={min_val} max={max_val}"
+        )
+        if col == "hora_do_dia":
+            out = int(((series < 0) | (series > 23)).sum())
+            print(f"[Sanity:{name}] hora_do_dia_out_of_range={out}")
+        if col == "dia_da_semana":
+            out = int(((series < 0) | (series > 6)).sum())
+            print(f"[Sanity:{name}] dia_da_semana_out_of_range={out}")
+        if col in ("pickup_id", "dropoff_id"):
+            non_positive = int((series <= 0).sum())
+            print(f"[Sanity:{name}] {col}_non_positive={non_positive}")
 
 #Peso beta da loss
 def _kl_beta(epoch: int) -> float:
@@ -72,16 +112,32 @@ def _prepare_dataloaders(
     val_df: pd.DataFrame,
     transformer: CategoricalTransformer,
 ) -> Tuple[DataLoader, DataLoader, pd.DataFrame, pd.DataFrame]:
+    _log_stage("prepare_dataloaders")
+    _print_df_sanity("train_input", train_df)
+    _print_df_sanity("val_input", val_df)
+
     #Faz um mapeamento para transformar em indices, meio que mapea os ids que temos atualmente em cada uma das counas
     # E adapta isso de forma que fique com ids continuos sem nenhum buraco, tipo, ao invés de ter 253, 255, 256
     # vai ter algo como 0, 1, 2, 3, 4, 5, ...
     #Precisa disso pro one hot encoding
     train_idx = transformer.transform(train_df, drop_unknown=True)
     val_idx = transformer.transform(val_df, drop_unknown=True)
+    _log_stage("transform_to_indices")
+    _print_df_sanity("train_idx", train_idx)
+    _print_df_sanity("val_idx", val_idx)
 
     #onehot enconding treino e teste
     x_train = transformer.one_hot_encode(train_idx)
     x_val = transformer.one_hot_encode(val_idx)
+    expected_dim = sum(transformer.cardinalities.values())
+    print(
+        f"[Sanity:one_hot] x_train_shape={x_train.shape} "
+        f"x_val_shape={x_val.shape} expected_dim={expected_dim}"
+    )
+    print(
+        f"[Sanity:one_hot] x_train_nan={int(np.isnan(x_train).sum())} "
+        f"x_val_nan={int(np.isnan(x_val).sum())}"
+    )
 
     train_ds = TensorDataset(
         torch.from_numpy(x_train).float(),
@@ -105,6 +161,10 @@ def _prepare_dataloaders(
         shuffle=False,
         drop_last=False,
         num_workers=config.NUM_WORKERS,
+    )
+    print(
+        f"[Sanity:dataloaders] train_batches={len(train_loader)} "
+        f"val_batches={len(val_loader)} batch_size={config.BATCH_SIZE}"
     )
 
     return train_loader, val_loader, train_idx, val_idx
@@ -301,6 +361,7 @@ def _compute_metrics(
     output_dir: Path,
     plot_dir: Path,
 ) -> Dict[str, float]:
+    print(f"[Stage] compute_metrics ({order_key})")
     metrics: Dict[str, float] = {}
     metrics["n_real"] = float(len(real_df))
     metrics["n_synth"] = float(len(synth_df))
@@ -340,57 +401,84 @@ def _compute_metrics(
 def _compute_paper_metrics(
     train_df: pd.DataFrame, test_df: pd.DataFrame, synth_df: pd.DataFrame
 ) -> Dict[str, float]:
+    print("[Stage] compute_paper_metrics (W1/Graph/Coverage)")
     metrics: Dict[str, float] = {}
 
-    metrics["w1_tr_te"] = wasserstein_time(
-        train_df, test_df, support_size=config.TIME_KEY_CARDINALITY
+    max_samples = getattr(config, "PAPER_MAX_SAMPLES", 20000)
+    graph_use_full_data = bool(getattr(config, "PAPER_GRAPH_USE_FULL_DATA", True))
+    sample_seed = getattr(config, "PAPER_SAMPLE_SEED", None)
+
+    def _maybe_sample(df: pd.DataFrame, name: str) -> pd.DataFrame:
+        if max_samples is None or max_samples <= 0 or len(df) <= max_samples:
+            return df
+        sampled = df.sample(n=max_samples, random_state=sample_seed).reset_index(drop=True)
+        print(f"[PaperMetrics] cap_{name}: {len(df)} -> {len(sampled)}")
+        return sampled
+
+    def _run_metric(name: str, fn) -> float:
+        t0 = time.perf_counter()
+        print(f"[Metric] {name} - start")
+        value = float(fn())
+        dt = time.perf_counter() - t0
+        print(f"[Metric] {name} - done value={value:.6f} time_s={dt:.3f}")
+        return value
+
+    print("[Stage] compute_paper_metrics - Graph Similarity")
+    if graph_use_full_data:
+        graph_train_df = train_df
+        graph_test_df = test_df
+        graph_synth_df = synth_df
+    else:
+        # Legado: aplicar cap também no grafo (menos equivalente ao paper).
+        graph_train_df = _maybe_sample(train_df, "train_graph")
+        graph_test_df = _maybe_sample(test_df, "test_graph")
+        graph_synth_df = _maybe_sample(synth_df, "synth_graph")
+    metrics["g_tr_te"] = _run_metric(
+        "Graph g_tr_te",
+        lambda: 100.0 * graph_similarity_score(graph_train_df, graph_test_df),
     )
-    metrics["w1_tr_syn"] = wasserstein_time(
-        train_df, synth_df, support_size=config.TIME_KEY_CARDINALITY
+    metrics["g_tr_syn"] = _run_metric(
+        "Graph g_tr_syn",
+        lambda: 100.0 * graph_similarity_score(graph_train_df, graph_synth_df),
     )
-    metrics["w1_te_syn"] = wasserstein_time(
-        test_df, synth_df, support_size=config.TIME_KEY_CARDINALITY
+    metrics["g_te_syn"] = _run_metric(
+        "Graph g_te_syn",
+        lambda: 100.0 * graph_similarity_score(graph_test_df, graph_synth_df),
     )
 
-    metrics["g_tr_te"] = 100.0 * graph_similarity_score(train_df, test_df)
-    metrics["g_tr_syn"] = 100.0 * graph_similarity_score(train_df, synth_df)
-    metrics["g_te_syn"] = 100.0 * graph_similarity_score(test_df, synth_df)
+    # Equivalente ao artigo: W1/Coverage com cap MAXNUM (20k), Graph no full.
+    train_eval_df = _maybe_sample(train_df, "train_eval")
+    test_eval_df = _maybe_sample(test_df, "test_eval")
+    synth_eval_df = _maybe_sample(synth_df, "synth_eval")
 
-    metrics["cov_tr_te"] = coverage_score(
-        train_df,
-        test_df,
-        k=config.COVERAGE_K,
-        max_samples=config.COVERAGE_MAX_SAMPLES,
-        seed=config.GLOBAL_SEED,
-        chunk_size=config.COVERAGE_CHUNK_SIZE,
-        w_time=config.COVERAGE_TIME_WEIGHT,
-        w_space=config.COVERAGE_SPACE_WEIGHT,
+    train_np = train_eval_df.to_numpy()
+    test_np = test_eval_df.to_numpy()
+    synth_np = synth_eval_df.to_numpy().astype("float")
+
+    train_scaled, synth_scaled, _, _, _ = minmax_scale_dummy(train_np, synth_np, [], divide_by=2)
+    _, test_scaled, _, _, _ = minmax_scale_dummy(train_np, test_np, [], divide_by=2)
+
+    print("[Stage] compute_paper_metrics - W1")
+    metrics["w1_tr_te"] = _run_metric(
+        "W1 w1_tr_te", lambda: emd_l1_distance(train_scaled, test_scaled)
     )
-    metrics["cov_tr_syn"] = coverage_score(
-        train_df,
-        synth_df,
-        k=config.COVERAGE_K,
-        max_samples=config.COVERAGE_MAX_SAMPLES,
-        seed=config.GLOBAL_SEED,
-        chunk_size=config.COVERAGE_CHUNK_SIZE,
-        w_time=config.COVERAGE_TIME_WEIGHT,
-        w_space=config.COVERAGE_SPACE_WEIGHT,
+    metrics["w1_tr_syn"] = _run_metric(
+        "W1 w1_tr_syn", lambda: emd_l1_distance(train_scaled, synth_scaled)
     )
-    metrics["cov_te_syn"] = coverage_score(
-        test_df,
-        synth_df,
-        k=config.COVERAGE_K,
-        max_samples=config.COVERAGE_MAX_SAMPLES,
-        seed=config.GLOBAL_SEED,
-        chunk_size=config.COVERAGE_CHUNK_SIZE,
-        w_time=config.COVERAGE_TIME_WEIGHT,
-        w_space=config.COVERAGE_SPACE_WEIGHT,
+    metrics["w1_te_syn"] = _run_metric(
+        "W1 w1_te_syn", lambda: emd_l1_distance(test_scaled, synth_scaled)
     )
 
-    metrics["coverage_k"] = float(config.COVERAGE_K)
-    metrics["coverage_max_samples"] = float(config.COVERAGE_MAX_SAMPLES or 0)
-    metrics["coverage_time_weight"] = float(config.COVERAGE_TIME_WEIGHT)
-    metrics["coverage_space_weight"] = float(config.COVERAGE_SPACE_WEIGHT)
+    print("[Stage] compute_paper_metrics - Coverage PRDC")
+    metrics["cov_tr_te"] = _run_metric(
+        "PRDC cov_tr_te", lambda: 100.0 * compute_coverage_prdc(train_scaled, test_scaled)
+    )
+    metrics["cov_tr_syn"] = _run_metric(
+        "PRDC cov_tr_syn", lambda: 100.0 * compute_coverage_prdc(train_scaled, synth_scaled)
+    )
+    metrics["cov_te_syn"] = _run_metric(
+        "PRDC cov_te_syn", lambda: 100.0 * compute_coverage_prdc(test_scaled, synth_scaled)
+    )
 
     return metrics
 
@@ -498,6 +586,7 @@ def train_single_order(
     with log_path.open("w", encoding="utf-8") as fh, contextlib.redirect_stdout(
         Tee(sys.stdout, fh)
     ):
+        _log_stage("train_single_order")
         print(f"[Train] order_key={order_key} order={order}")
         print(
             f"[Train] train_rows={len(train_df)} val_rows={len(val_df)} hold_rows={len(hold_df)}"
@@ -512,6 +601,10 @@ def train_single_order(
         if config.PAIR_KL_WEIGHT > 0.0:
             pickup_size = transformer.cardinalities["pickup_id"]
             dropoff_size = transformer.cardinalities["dropoff_id"]
+            print(
+                f"[Sanity:pair_kl] pickup_size={pickup_size} "
+                f"dropoff_size={dropoff_size}"
+            )
             pair_kl_log_q = _build_dropoff_conditional_log_q(
                 train_idx,
                 pickup_size=pickup_size,
@@ -521,6 +614,7 @@ def train_single_order(
             pair_kl_log_q = torch.from_numpy(pair_kl_log_q).float().to(device)
         if config.PICKUP_KL_WEIGHT > 0.0:
             pickup_size = transformer.cardinalities["pickup_id"]
+            print(f"[Sanity:pickup_kl] pickup_size={pickup_size}")
             pickup_kl_log_q = _build_pickup_log_q(
                 train_idx,
                 pickup_size=pickup_size,
@@ -540,104 +634,139 @@ def train_single_order(
             model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY
         )
 
-        best_val = float("inf")
-        best_state = None
-        epochs_no_improve = 0
-
-        loss_rows = []
-        train_start = time.monotonic()
-        for epoch in range(1, config.EPOCHS + 1):
-            beta = _kl_beta(epoch)
-            train_loss, train_ce, train_kl, train_pair_kl, train_pickup_kl = _epoch_pass(
-                model,
-                train_loader,
-                col_to_idx,
-                order,
-                device,
-                beta,
-                pair_kl_log_q=pair_kl_log_q,
-                pair_kl_weight=config.PAIR_KL_WEIGHT,
-                pickup_kl_log_q=pickup_kl_log_q,
-                pickup_kl_weight=config.PICKUP_KL_WEIGHT,
-                train=True,
-                optimizer=optimizer,
-            )
-            val_loss, val_ce, val_kl, val_pair_kl, val_pickup_kl = _epoch_pass(
-                model,
-                val_loader,
-                col_to_idx,
-                order,
-                device,
-                beta,
-                pair_kl_log_q=pair_kl_log_q,
-                pair_kl_weight=config.PAIR_KL_WEIGHT,
-                pickup_kl_log_q=pickup_kl_log_q,
-                pickup_kl_weight=config.PICKUP_KL_WEIGHT,
-                train=False,
-            )
-
-            loss_rows.append(
-                {
-                    "epoch": epoch,
-                    "beta": beta,
-                    "train_loss": train_loss,
-                    "train_ce": train_ce,
-                    "train_kl": train_kl,
-                    "train_pair_kl": train_pair_kl,
-                    "train_pickup_kl": train_pickup_kl,
-                    "val_loss": val_loss,
-                    "val_ce": val_ce,
-                    "val_kl": val_kl,
-                    "val_pair_kl": val_pair_kl,
-                    "val_pickup_kl": val_pickup_kl,
-                }
-            )
-            print(
-                f"[Epoch {epoch:03d}] beta={beta:.4f} train_loss={train_loss:.4f} "
-                f"val_loss={val_loss:.4f}"
-            )
-
-            if best_val - val_loss > config.MIN_DELTA:
-                best_val = val_loss
-                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-
-            if epochs_no_improve >= config.PATIENCE:
-                print("[Train] early stopping")
-                break
-        train_time_min = (time.monotonic() - train_start) / 60.0
-
-        if best_state is not None:
-            model.load_state_dict(best_state)
-
-        loss_df = pd.DataFrame(loss_rows)
-        loss_df.to_csv(output_dir / f"loss_{order_key}.csv", index=False)
-
-        save_mappings(output_dir / f"mappings_{order_key}.json", transformer)
-
-        meta = {
-            "column_sizes": transformer.cardinalities,
-            "order": order,
-            "encoder_hidden_dims": list(config.ENCODER_HIDDEN_DIMS),
-            "decoder_hidden_dims": list(config.DECODER_HIDDEN_DIMS),
-            "latent_dim": config.LATENT_DIM,
-            "columns": transformer.columns,
-        }
         checkpoint_path = output_dir / f"tvae_{order_key}.pt"
-        save_checkpoint(
-            checkpoint_path,
-            model_state=model.state_dict(),
-            meta=meta,
-            optimizer_state=optimizer.state_dict(),
-            epoch=epoch,
-            metrics={"best_val": best_val},
-        )
+        # run_training = True  # Treinamento completo (fluxo original)
+        run_training = True
+
+        if run_training:
+            print(
+                f"[Sanity:train_setup] device={device.type} epochs={config.EPOCHS} "
+                f"batch_size={config.BATCH_SIZE}"
+            )
+            best_val = float("inf")
+            best_state = None
+            epochs_no_improve = 0
+
+            loss_rows = []
+            train_start = time.monotonic()
+            for epoch in range(1, config.EPOCHS + 1):
+                beta = _kl_beta(epoch)
+                train_loss, train_ce, train_kl, train_pair_kl, train_pickup_kl = _epoch_pass(
+                    model,
+                    train_loader,
+                    col_to_idx,
+                    order,
+                    device,
+                    beta,
+                    pair_kl_log_q=pair_kl_log_q,
+                    pair_kl_weight=config.PAIR_KL_WEIGHT,
+                    pickup_kl_log_q=pickup_kl_log_q,
+                    pickup_kl_weight=config.PICKUP_KL_WEIGHT,
+                    train=True,
+                    optimizer=optimizer,
+                )
+                val_loss, val_ce, val_kl, val_pair_kl, val_pickup_kl = _epoch_pass(
+                    model,
+                    val_loader,
+                    col_to_idx,
+                    order,
+                    device,
+                    beta,
+                    pair_kl_log_q=pair_kl_log_q,
+                    pair_kl_weight=config.PAIR_KL_WEIGHT,
+                    pickup_kl_log_q=pickup_kl_log_q,
+                    pickup_kl_weight=config.PICKUP_KL_WEIGHT,
+                    train=False,
+                )
+
+                loss_rows.append(
+                    {
+                        "epoch": epoch,
+                        "beta": beta,
+                        "train_loss": train_loss,
+                        "train_ce": train_ce,
+                        "train_kl": train_kl,
+                        "train_pair_kl": train_pair_kl,
+                        "train_pickup_kl": train_pickup_kl,
+                        "val_loss": val_loss,
+                        "val_ce": val_ce,
+                        "val_kl": val_kl,
+                        "val_pair_kl": val_pair_kl,
+                        "val_pickup_kl": val_pickup_kl,
+                    }
+                )
+                print(
+                    f"[Epoch {epoch:03d}] beta={beta:.4f} train_loss={train_loss:.4f} "
+                    f"val_loss={val_loss:.4f}"
+                )
+
+                if best_val - val_loss > config.MIN_DELTA:
+                    best_val = val_loss
+                    best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+
+                if epochs_no_improve >= config.PATIENCE:
+                    print("[Train] early stopping")
+                    break
+            train_time_min = (time.monotonic() - train_start) / 60.0
+
+            if best_state is not None:
+                model.load_state_dict(best_state)
+
+            loss_df = pd.DataFrame(loss_rows)
+            print("[Stage] save_loss_csv")
+            loss_df.to_csv(output_dir / f"loss_{order_key}.csv", index=False)
+
+            print("[Stage] save_mappings")
+            save_mappings(output_dir / f"mappings_{order_key}.json", transformer)
+
+            meta = {
+                "column_sizes": transformer.cardinalities,
+                "order": order,
+                "encoder_hidden_dims": list(config.ENCODER_HIDDEN_DIMS),
+                "decoder_hidden_dims": list(config.DECODER_HIDDEN_DIMS),
+                "latent_dim": config.LATENT_DIM,
+                "columns": transformer.columns,
+            }
+            print(f"[Stage] save_checkpoint ({checkpoint_path})")
+            save_checkpoint(
+                checkpoint_path,
+                model_state=model.state_dict(),
+                meta=meta,
+                optimizer_state=optimizer.state_dict(),
+                epoch=epoch,
+                metrics={"best_val": best_val},
+            )
+        else:
+            # print(
+            #     f"[Sanity:train_setup] device={device.type} epochs={config.EPOCHS} "
+            #     f"batch_size={config.BATCH_SIZE}"
+            # )
+            # ...
+            # [Trecho de treinamento completo mantido acima no bloco if run_training]
+            print(f"[Stage] load_checkpoint ({checkpoint_path})")
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(
+                    f"Checkpoint nao encontrado em {checkpoint_path}. "
+                    "Ative run_training=True para treinar novamente."
+                )
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            model.load_state_dict(checkpoint["model_state"])
+            best_val = float(checkpoint.get("metrics", {}).get("best_val", float("nan")))
+            train_time_min = 0.0
+            print(f"[Train] loaded checkpoint={checkpoint_path}")
+            print(f"[Train] loaded best_val={best_val:.6f}")
+
+            print("[Stage] save_mappings")
+            save_mappings(output_dir / f"mappings_{order_key}.json", transformer)
 
         eval_df = hold_df if len(hold_df) > 0 else val_df
         n_eval = _eval_sample_size(eval_df)
         sample_start = time.monotonic()
+        _log_stage("sample_synthetic")
+        print(f"[Sanity:sample] n_eval={n_eval}")
         synth_df = _sample_synthetic(
             model,
             transformer,
@@ -645,6 +774,7 @@ def train_single_order(
             temperature=config.SAMPLE_TEMPERATURE,
             device=device,
         )
+        _print_df_sanity("synth_sample", synth_df)
         sample_time_min = (time.monotonic() - sample_start) / 60.0
 
         metrics = _compute_metrics(
@@ -660,6 +790,7 @@ def train_single_order(
         metrics["train_time_min"] = train_time_min
         metrics["sample_time_min"] = sample_time_min
         metrics["total_time_min"] = train_time_min + sample_time_min
+        print("[Stage] save_metrics_json")
         save_metrics_json(metrics, output_dir / f"metrics_{order_key}.json")
 
         print(f"[Train] saved checkpoint={checkpoint_path}")
@@ -676,10 +807,16 @@ def train_all_orders() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    _log_stage("load_and_split")
+    _print_df_sanity("raw_train", raw_train_df)
+    _print_df_sanity("raw_val", raw_val_df)
+    _print_df_sanity("raw_hold", raw_hold_df)
+
     for exp_name, overrides in experiments.items():
         backup = _apply_overrides(overrides)
         output_dir, log_dir, plot_dir = _run_dirs(exp_name)
 
+        print("[Stage] save_split_stats")
         _save_split_stats(raw_train_df, raw_val_df, raw_hold_df, output_dir=output_dir)
         baseline_metrics = _compute_metrics(
             raw_train_df,
@@ -688,16 +825,26 @@ def train_all_orders() -> None:
             output_dir=output_dir,
             plot_dir=plot_dir,
         )
+        print("[Stage] save_baseline_metrics")
         save_metrics_json(baseline_metrics, output_dir / "metrics_train_vs_val.json")
 
         train_df = raw_train_df
         val_df = raw_val_df
+        _log_stage("transformer_fit")
         transformer = CategoricalTransformer(config.OUTPUT_COLUMNS)
         transformer.fit(train_df)
+        print(f"[Sanity:transformer] cardinalities={transformer.cardinalities}")
 
+        _log_stage("filter_known")
+        before = (len(train_df), len(val_df), len(raw_hold_df))
         val_df = _filter_known(val_df, transformer)
         train_df = _filter_known(train_df, transformer)
         hold_df = _filter_known(raw_hold_df, transformer)
+        after = (len(train_df), len(val_df), len(hold_df))
+        print(f"[Sanity:filter_known] rows_before={before} rows_after={after}")
+        _print_df_sanity("train_filtered", train_df)
+        _print_df_sanity("val_filtered", val_df)
+        _print_df_sanity("hold_filtered", hold_df)
 
         order_key = config.FIXED_ORDER_KEY
         order = config.ORDERS[order_key]

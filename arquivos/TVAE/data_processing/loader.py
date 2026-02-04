@@ -13,6 +13,7 @@ from config import (
     FILTER_MONTHS,
     FILTER_START_DATE,
     FILTER_YEAR,
+    GLOBAL_SEED,
     PICKUP_ID_COL,
     REAL_DATA_PATH,
     TRAIN_FRAC,
@@ -107,9 +108,32 @@ def split_dataset_weekly(
     return df_train, df_val, df_hold
 
 
+def split_dataset_random(
+    df: pd.DataFrame,
+    train_frac: float = TRAIN_FRAC,
+    val_frac: float = VAL_FRAC,
+    seed: int = GLOBAL_SEED,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    df = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    n = len(df)
+    n_train = int(n * train_frac)
+    n_val = int(n * val_frac)
+
+    df_train = df.iloc[:n_train].reset_index(drop=True)
+    df_val = df.iloc[n_train : n_train + n_val].reset_index(drop=True)
+    # Hold vazio: tudo que sobra vai para o val quando TRAIN_FRAC + VAL_FRAC >= 1
+    if train_frac + val_frac >= 1.0:
+        df_val = df.iloc[n_train:].reset_index(drop=True)
+        df_hold = df.iloc[0:0].reset_index(drop=True)
+    else:
+        df_hold = df.iloc[n_train + n_val :].reset_index(drop=True)
+    return df_train, df_val, df_hold
+
+
 def load_and_split() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     df = load_raw_data()
-    train_df, val_df, hold_df = split_dataset_weekly(df)
+    # train_df, val_df, hold_df = split_dataset_weekly(df)
+    train_df, val_df, hold_df = split_dataset_random(df)
     train_df = train_df.drop(columns=[DATETIME_COL])
     val_df = val_df.drop(columns=[DATETIME_COL])
     hold_df = hold_df.drop(columns=[DATETIME_COL])
