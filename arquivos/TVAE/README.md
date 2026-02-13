@@ -26,10 +26,23 @@ python -m pip install contextily tensorboard
 
 If geopandas fails via pip, install it with conda/mamba instead.
 
-1) Put data in place + set config
+1) Prepare data in place + set config
 
-- Trips parquet -> `data/viagens_lat_long.parquet`
-- Taxi zones polygons -> `data/taxi_zones.parquet` (or .shp/.zip)
+- Convert raw taxi trips to centroid coordinates first:
+
+```bash
+python tools/converter_lagitude_longitude.py \
+  --trip-parquet /path/to/yellow_tripdata_2024-04.parquet \
+  --trip-parquet /path/to/yellow_tripdata_2024-05.parquet \
+  --zones /path/to/taxi-zones \
+  --output data/viagens_lat_long.parquet
+```
+
+- Dependencies for this step: `geopandas`, `shapely`, `pyproj`, `pyarrow`, `pandas`.
+
+- Output trip file expected by pipeline:
+  - `data/viagens_lat_long.parquet` (can override via `--output`; default is `config.REAL_DATA_PATH`)
+- Taxi zones polygons -> `data/taxi_zones.parquet` (or .shp/.zip) for graph tooling.
 - Edit `config.py` to set:
   - `REAL_DATA_PATH`, `DATETIME_COL`, `PICKUP_ID_COL`, `DROPOFF_ID_COL`
   - time filters (`FILTER_YEAR`, `FILTER_MONTHS`, etc.)
@@ -87,6 +100,7 @@ The focus is to compare synthetic vs real data across marginal, spatial (OD), an
 - `models/`: THT-TripGen definitions.
 - `topology/`: graphs, node2vec, and visualization.
 - `tools/`: utilities (graphs, embeddings, visualization, pipeline).
+- `tools/converter_lagitude_longitude.py`: raw trip converter to `viagens_lat_long.parquet`.
 - `train_tht_tripgen.py`: training.
 - `sample_tht_tripgen.py`: sampling.
 - `recalc_metrics_tht_tripgen_hold.py`, `analyze_spatial.py`: evaluation.
