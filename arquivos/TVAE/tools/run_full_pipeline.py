@@ -18,11 +18,15 @@ import train_tht_tripgen
 import train_tvae
 from tools import compare_models, plot_training_curves
 from utils.helpers import set_seed
+from utils.metrics import joint_metrics, od_metrics, save_metrics_json
 
 import recalc_downstream_tht_tripgen
 import recalc_metrics_hold
 import recalc_metrics_tht_tripgen_hold
 import tools.build_tht_zone_embeddings as build_tht_zone_embeddings
+from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing.tht_tripgen_transformer import THTTripGenTransformer
+from utils.serialization import THT_TRIPGEN_MAPPINGS_FILENAME, load_tht_tripgen_mappings
 
 
 def _timestamp_tag(prefix: str) -> str:
@@ -133,6 +137,39 @@ def _recalc_tht_tripgen(run_dir: Path, force_sample: bool) -> None:
     if force_sample:
         args.append("--force-sample")
     _call_main(recalc_metrics_tht_tripgen_hold, args)
+
+
+def _filter_known_real(df, transformer: THTTripGenTransformer):
+    idx = transformer.transform(df, drop_unknown=False)
+    mask = idx.notna().all(axis=1) & idx["r"].notna()
+    return df.loc[mask].reset_index(drop=True)
+
+
+def _recalc_hold_vs_val_real(run_dir: Path) -> None:
+    """Recompute real split overlap metrics between hold and val (no synthetic sampling)."""
+    _, val_df, hold_df = load_and_split_tht_tripgen()
+    mappings_path = run_dir / THT_TRIPGEN_MAPPINGS_FILENAME
+    if not mappings_path.exists():
+        print(f"[Pipeline] skipping hold-vs-val real split metrics: missing mappings {mappings_path}")
+        return
+
+    transformer = load_tht_tripgen_mappings(mappings_path)
+    val_df = _filter_known_real(val_df, transformer)
+    hold_df = _filter_known_real(hold_df, transformer)
+
+    if len(val_df) == 0 or len(hold_df) == 0:
+        print("[Pipeline] skipping hold-vs-val real split metrics: empty split after filtering")
+        return
+
+    metrics = {}
+    metrics.update(od_metrics(hold_df, val_df))
+    metrics.update(joint_metrics(hold_df, val_df))
+
+    out_dir = run_dir / "metrics"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "metrics_hold_vs_val_real.json"
+    save_metrics_json(metrics, out_path)
+    print(f"[Pipeline] saved hold-vs-val real split metrics -> {out_path}")
 
 
 def _recalc_downstream_tht_tripgen(
@@ -316,6 +353,7 @@ def main() -> int:
     if not args.skip_baseline:
         _recalc_baseline(baseline_dir, args.force_sample)
     _recalc_tht_tripgen(tht_tripgen_dir, args.force_sample)
+    _recalc_hold_vs_val_real(tht_tripgen_dir)
     if not args.skip_downstream:
         _recalc_downstream_tht_tripgen(
             tht_tripgen_dir,

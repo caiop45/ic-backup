@@ -125,3 +125,6 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
 
     downstream_path = strategy_dir / "metrics" / "downstream_tht_tripgen_hold.json"
     assert downstream_path.exists()
+
+    hold_vs_val_metrics_path = strategy_dir / "metrics" / "metrics_hold_vs_val_real.json"
+    assert hold_vs_val_metrics_path.exists()
