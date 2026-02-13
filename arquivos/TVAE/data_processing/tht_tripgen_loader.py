@@ -126,6 +126,12 @@ def load_raw_data_tht_tripgen() -> pd.DataFrame:
         if raw_col not in df.columns:
             raise ValueError(f"Missing total_amount column: {raw_col}")
         df["total_amount"] = pd.to_numeric(df[raw_col], errors="coerce")
+        if bool(getattr(config, "THT_DROP_NEGATIVE_TOTAL_AMOUNT", False)):
+            neg_mask = df["total_amount"] < 0
+            if neg_mask.any():
+                num_neg = int(neg_mask.sum())
+                print(f"[THT-TripGen] dropping {num_neg} rows with negative {raw_col}")
+                df = df.loc[~neg_mask].reset_index(drop=True)
 
     if config.THT_USE_WEEKEND:
         df["is_weekend"] = (df["dia_da_semana"] >= 5).astype("int64")

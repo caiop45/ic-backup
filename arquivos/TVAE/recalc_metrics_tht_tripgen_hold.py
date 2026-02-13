@@ -60,6 +60,24 @@ def _metrics_columns(*dfs: pd.DataFrame) -> list[str]:
     return cols
 
 
+def _attribute_columns() -> tuple[list[str], list[str]]:
+    passenger_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_DISCRETE_COLUMNS",
+            [str(getattr(config, "PASSENGER_COL", "passenger_count"))],
+        )
+    )
+    fare_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_CONTINUOUS_COLUMNS",
+            [str(getattr(config, "FARE_COL", "total_amount"))],
+        )
+    )
+    return passenger_cols, fare_cols
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -174,10 +192,13 @@ def main() -> int:
     )
     metrics.update(paper_metrics)
     if bool(getattr(config, "EVAL_ENABLE_ATTRIBUTE_METRICS", True)):
+        passenger_cols, fare_cols = _attribute_columns()
         metrics.update(
             compute_attribute_metrics(
                 eval_df,
                 synth_df,
+                passenger_cols=passenger_cols,
+                fare_cols=fare_cols,
                 plot_dir=plot_dir,
                 order_key=f"tht_tripgen_{split_name}",
             )

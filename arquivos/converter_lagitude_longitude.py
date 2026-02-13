@@ -7,6 +7,7 @@ from sklearn.preprocessing import StandardScaler
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from pyproj import Transformer
 
 # Inicia contagem de tempo total (opcional, se quiser medir o total)
 tempo_inicio_total = time.time()
@@ -21,7 +22,17 @@ parquet_files = [
     # Dá pra adicionar a viagem do resto dos meses aqui
 ]
 df = pd.concat([pd.read_parquet(file) for file in parquet_files], ignore_index=True)
-df = df[['tpep_pickup_datetime', 'PULocationID', 'DOLocationID']]
+required_cols = [
+    'tpep_pickup_datetime',
+    'PULocationID',
+    'DOLocationID',
+    'passenger_count',
+    'total_amount',
+]
+missing_cols = [col for col in required_cols if col not in df.columns]
+if missing_cols:
+    raise ValueError(f"Columns missing in source parquet files: {missing_cols}")
+df = df[required_cols]
 print(f"[1] Tempo de leitura dos dados de viagens: {time.time() - tempo_inicio:.2f} segundos")
 
 df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"])
@@ -74,6 +85,9 @@ df.drop(columns=['LocationID'], inplace=True)
 viagem_por_geometry = gpd.GeoDataFrame(df, geometry='PU_Geometry')
 print(f"[3] Tempo de merge das geometrias: {time.time() - tempo_inicio:.2f} s")
 
+# Drop geometry helper columns used only for merge; keep only plain columns for parquet output.
+df = df.drop(columns=[col for col in ("PU_Geometry", "DO_Geometry") if col in df.columns])
+
 # ===========================================
 # 4. Pré-processar e armazenar bounds em RAM
 # ===========================================
@@ -95,10 +109,23 @@ print(f"[4] Tempo para pré-processar zones_df: {time.time() - tempo_inicio:.2f}
 tempo_inicio = time.time()
 
 zones_df = gdf[['LocationID', 'geometry']].copy()
-zones_df['centroid'] = zones_df['geometry'].centroid
 
-# Cria um dicionário: zone_id -> centroide (objeto shapely Point)
-zone_centroid_dict = dict(zip(zones_df['LocationID'], zones_df['centroid']))
+# Use projected centroids, then convert to WGS84 lon/lat with pyproj.
+zones_df = zones_df.to_crs("EPSG:3857")
+zones_df["centroid"] = zones_df.geometry.centroid
+mercator_to_wgs84 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+
+# Cria dicionários: zone_id -> centroid lon/lat in graus.
+zone_lon_dict = {}
+zone_lat_dict = {}
+for zone_id, centroid in zip(zones_df["LocationID"], zones_df["centroid"]):
+    if centroid is None or pd.isna(centroid.x) or pd.isna(centroid.y):
+        zone_lon_dict[int(zone_id)] = float("nan")
+        zone_lat_dict[int(zone_id)] = float("nan")
+    else:
+        lon, lat = mercator_to_wgs84.transform(float(centroid.x), float(centroid.y))
+        zone_lon_dict[int(zone_id)] = float(lon)
+        zone_lat_dict[int(zone_id)] = float(lat)
 
 print(f"[4] Tempo para pré-processar zones_df (centroides): {time.time() - tempo_inicio:.2f} s")
 
@@ -107,38 +134,11 @@ print(f"[4] Tempo para pré-processar zones_df (centroides): {time.time() - temp
 # ===========================================
 tempo_inicio = time.time()
 
-final_data = []
-num_rows = len(df)
-for idx, row in df.iterrows():
-    pu_id = row['PULocationID']
-    do_id = row['DOLocationID']
-    
-    # Usa o centroide para PickUp
-    if pu_id in zone_centroid_dict:
-        pu_lon = zone_centroid_dict[pu_id].x
-        pu_lat = zone_centroid_dict[pu_id].y
-    else:
-        pu_lon = None
-        pu_lat = None
-        
-    # Usa o centroide para DropOff
-    if do_id in zone_centroid_dict:
-        do_lon = zone_centroid_dict[do_id].x
-        do_lat = zone_centroid_dict[do_id].y
-    else:
-        do_lon = None
-        do_lat = None
+dados_taxi = df.copy()
+dados_taxi["PU_longitude"] = dados_taxi["PULocationID"].map(zone_lon_dict)
+dados_taxi["PU_latitude"] = dados_taxi["PULocationID"].map(zone_lat_dict)
+dados_taxi["DO_longitude"] = dados_taxi["DOLocationID"].map(zone_lon_dict)
+dados_taxi["DO_latitude"] = dados_taxi["DOLocationID"].map(zone_lat_dict)
 
-    final_data.append({
-        "tpep_pickup_datetime": row["tpep_pickup_datetime"],
-        "PULocationID": pu_id,
-        "DOLocationID": do_id,
-        "PU_longitude": pu_lon,
-        "PU_latitude":  pu_lat,
-        "DO_longitude": do_lon,
-        "DO_latitude":  do_lat
-    })
-
-dados_taxi = pd.DataFrame(final_data)
 print(f"[5] Tempo para gerar as coordenadas (centroides): {time.time() - tempo_inicio:.2f} s")
-dados_taxi.to_parquet('viagens_lat_long.parquet', index=False)
+dados_taxi.to_parquet('data/viagens_lat_long.parquet', index=False)

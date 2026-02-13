@@ -109,70 +109,112 @@ def compute_attribute_metrics(
     *,
     fare_col: str | None = None,
     passenger_col: str | None = None,
+    fare_cols: Sequence[str] | None = None,
+    passenger_cols: Sequence[str] | None = None,
     quantiles: Sequence[float] | None = None,
     plot_dir: Path | None = None,
     order_key: str | None = None,
 ) -> Dict[str, float]:
-    """Compute marginal/conditional metrics for passenger_count and fare."""
-    if fare_col is None:
-        fare_col = str(getattr(config, "FARE_COL", "total_amount"))
-    if passenger_col is None:
-        passenger_col = str(getattr(config, "PASSENGER_COL", "passenger_count"))
+    """Compute marginal/conditional metrics for discrete/continuous attributes."""
+    if passenger_cols is None:
+        if passenger_col is not None:
+            passenger_cols = [passenger_col]
+        else:
+            passenger_cols = list(
+                getattr(
+                    config,
+                    "THT_ATTRIBUTE_DISCRETE_COLUMNS",
+                    [str(getattr(config, "PASSENGER_COL", "passenger_count"))],
+                )
+            )
+
+    if fare_cols is None:
+        if fare_col is not None:
+            fare_cols = [fare_col]
+        else:
+            fare_cols = list(
+                getattr(
+                    config,
+                    "THT_ATTRIBUTE_CONTINUOUS_COLUMNS",
+                    [str(getattr(config, "FARE_COL", "total_amount"))],
+                )
+            )
+
+    # keep deterministic ordering and avoid duplicates if config contains repeats
+    def _dedup(columns: Sequence[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for col in columns:
+            if col in seen:
+                continue
+            out.append(col)
+            seen.add(col)
+        return out
+
+    passenger_cols = _dedup(passenger_cols)
+    fare_cols = _dedup(fare_cols)
     if quantiles is None:
         quantiles = [0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99]
 
     metrics: Dict[str, float] = {}
 
-    if passenger_col in real_df.columns and passenger_col in synth_df.columns:
-        real_counts = marginal_counts(real_df, passenger_col)
-        synth_counts = marginal_counts(synth_df, passenger_col)
-        metrics[f"{passenger_col}_jsd"] = jsd_counts(real_counts, synth_counts)
-        metrics[f"{passenger_col}_chi2"] = chi2_counts(real_counts, synth_counts)
-        if plot_dir is not None and order_key is not None:
-            plot_marginal_hist(
-                real_counts,
-                synth_counts,
-                title=f"{order_key} {passenger_col}",
-                path=plot_dir / f"hist_{order_key}_{passenger_col}.png",
-            )
-
-    if fare_col in real_df.columns and fare_col in synth_df.columns:
-        real_z = safe_log1p(real_df[fare_col])
-        synth_z = safe_log1p(synth_df[fare_col])
-        metrics[f"{fare_col}_log1p_w1"] = wasserstein_1d_continuous(real_z, synth_z)
-        metrics[f"{fare_col}_log1p_ks"] = ks_statistic_1d(real_z, synth_z)
-        metrics[f"{fare_col}_log1p_quantile_mae"] = quantile_mae(real_z, synth_z, quantiles)
-
-        if "hora_do_dia" in real_df.columns and "hora_do_dia" in synth_df.columns:
-            real_tmp = pd.DataFrame({"hora_do_dia": real_df["hora_do_dia"], "_val": real_z})
-            synth_tmp = pd.DataFrame(
-                {"hora_do_dia": synth_df["hora_do_dia"], "_val": synth_z}
-            )
-            metrics[f"{fare_col}_log1p_median_mae_by_hour"] = median_profile_mae(
-                real_tmp, synth_tmp, group_col="hora_do_dia", value_col="_val"
-            )
-
-        if (
-            passenger_col in real_df.columns
-            and passenger_col in synth_df.columns
-        ):
-            real_tmp = pd.DataFrame({passenger_col: real_df[passenger_col], "_val": real_z})
-            synth_tmp = pd.DataFrame(
-                {passenger_col: synth_df[passenger_col], "_val": synth_z}
-            )
-            metrics[f"{fare_col}_log1p_median_mae_by_{passenger_col}"] = (
-                median_profile_mae(
-                    real_tmp, synth_tmp, group_col=passenger_col, value_col="_val"
+    for passenger_col in passenger_cols:
+        if passenger_col in real_df.columns and passenger_col in synth_df.columns:
+            real_counts = marginal_counts(real_df, passenger_col)
+            synth_counts = marginal_counts(synth_df, passenger_col)
+            metrics[f"{passenger_col}_jsd"] = jsd_counts(real_counts, synth_counts)
+            metrics[f"{passenger_col}_chi2"] = chi2_counts(real_counts, synth_counts)
+            if plot_dir is not None and order_key is not None:
+                plot_marginal_hist(
+                    real_counts,
+                    synth_counts,
+                    title=f"{order_key} {passenger_col}",
+                    path=plot_dir / f"hist_{order_key}_{passenger_col}.png",
                 )
+
+    for fare_col in fare_cols:
+        if fare_col in real_df.columns and fare_col in synth_df.columns:
+            real_z = safe_log1p(real_df[fare_col])
+            synth_z = safe_log1p(synth_df[fare_col])
+            metrics[f"{fare_col}_log1p_w1"] = wasserstein_1d_continuous(real_z, synth_z)
+            metrics[f"{fare_col}_log1p_ks"] = ks_statistic_1d(real_z, synth_z)
+            metrics[f"{fare_col}_log1p_quantile_mae"] = quantile_mae(
+                real_z, synth_z, quantiles
             )
 
-        if plot_dir is not None and order_key is not None:
-            plot_continuous_hist(
-                real_z,
-                synth_z,
-                title=f"{order_key} {fare_col} (log1p)",
-                path=plot_dir / f"hist_{order_key}_{fare_col}_log1p.png",
-            )
+            if "hora_do_dia" in real_df.columns and "hora_do_dia" in synth_df.columns:
+                real_tmp = pd.DataFrame(
+                    {"hora_do_dia": real_df["hora_do_dia"], "_val": real_z}
+                )
+                synth_tmp = pd.DataFrame(
+                    {"hora_do_dia": synth_df["hora_do_dia"], "_val": synth_z}
+                )
+                metrics[f"{fare_col}_log1p_median_mae_by_hour"] = median_profile_mae(
+                    real_tmp, synth_tmp, group_col="hora_do_dia", value_col="_val"
+                )
+
+            for passenger_col in passenger_cols:
+                if passenger_col in real_df.columns and passenger_col in synth_df.columns:
+                    real_tmp = pd.DataFrame(
+                        {passenger_col: real_df[passenger_col], "_val": real_z}
+                    )
+                    synth_tmp = pd.DataFrame(
+                        {passenger_col: synth_df[passenger_col], "_val": synth_z}
+                    )
+                    metrics[f"{fare_col}_log1p_median_mae_by_{passenger_col}"] = (
+                        median_profile_mae(
+                            real_tmp, synth_tmp, group_col=passenger_col, value_col="_val"
+                        )
+                    )
+
+            if plot_dir is not None and order_key is not None:
+                plot_continuous_hist(
+                    real_z,
+                    synth_z,
+                    title=f"{order_key} {fare_col} (log1p)",
+                    path=plot_dir / f"hist_{order_key}_{fare_col}_log1p.png",
+                )
+
 
     return metrics
 

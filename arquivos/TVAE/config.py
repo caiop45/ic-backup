@@ -57,6 +57,8 @@ OUTPUT_COLUMNS = ["hora_do_dia", "dia_da_semana", "pickup_id", "dropoff_id"]
 PASSENGER_COL = "passenger_count"
 FARE_COL = "total_amount"
 R_COL = "r"
+THT_ATTRIBUTE_DISCRETE_COLUMNS = ["passenger_count"]
+THT_ATTRIBUTE_CONTINUOUS_COLUMNS = ["total_amount"]
 
 # Sampling
 SAMPLE_TEMPERATURE = 1.0
@@ -150,6 +152,7 @@ THT_USE_PASSENGER_COUNT = True
 THT_PASSENGER_COUNT_COL_RAW = "passenger_count"
 THT_USE_TOTAL_AMOUNT = True
 THT_TOTAL_AMOUNT_COL_RAW = "total_amount"
+THT_DROP_NEGATIVE_TOTAL_AMOUNT = True
 THT_TOTAL_AMOUNT_LOG1P = True
 THT_TOTAL_AMOUNT_CLIP_PMIN = 0.001
 THT_TOTAL_AMOUNT_CLIP_PMAX = 0.999

@@ -67,6 +67,24 @@ def _metrics_columns(*dfs: pd.DataFrame) -> List[str]:
     return cols
 
 
+def _attribute_columns() -> tuple[list[str], list[str]]:
+    passenger_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_DISCRETE_COLUMNS",
+            [str(getattr(config, "PASSENGER_COL", "passenger_count"))],
+        )
+    )
+    fare_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_CONTINUOUS_COLUMNS",
+            [str(getattr(config, "FARE_COL", "total_amount"))],
+        )
+    )
+    return passenger_cols, fare_cols
+
+
 def _filter_known(df: pd.DataFrame, transformer: THTTripGenTransformer) -> pd.DataFrame:
     idx = transformer.transform(df, drop_unknown=False)
     mask = idx.notna().all(axis=1) & idx["r"].notna()
@@ -534,9 +552,18 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
 
             if flow_every > 0 and epoch % flow_every == 0 and diag_batch is not None:
                 h_idx, o_idx, d_idx, r, *u_vals = diag_batch
+                optional_offset = 0
+                if use_passenger_count:
+                    optional_offset += 1
+                if use_total_amount:
+                    optional_offset += 1
+                if len(u_vals) < optional_offset + len(conditional_cols):
+                    raise RuntimeError(
+                        "Unexpected batch layout while running residual flow diagnostics"
+                    )
                 non_blocking = device.type == "cuda"
                 u = {
-                    col: u_vals[i].to(device, non_blocking=non_blocking)
+                    col: u_vals[optional_offset + i].to(device, non_blocking=non_blocking)
                     for i, col in enumerate(conditional_cols)
                 }
                 h_idx = h_idx.to(device, non_blocking=non_blocking)
@@ -729,9 +756,12 @@ def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
             paper_metrics = compute_paper_metrics(train_df, eval_df_sample, synth_decoded)
             metrics.update(paper_metrics)
             if bool(getattr(config, "EVAL_ENABLE_ATTRIBUTE_METRICS", True)):
+                passenger_cols, fare_cols = _attribute_columns()
                 attr_metrics = compute_attribute_metrics(
                     eval_df_sample,
                     synth_decoded,
+                    passenger_cols=passenger_cols,
+                    fare_cols=fare_cols,
                     plot_dir=plot_dir,
                     order_key=f"tht_tripgen_{split_name}",
                 )
