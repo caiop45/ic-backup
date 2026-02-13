@@ -1,5 +1,0 @@
-[Train] order_key=order_1 order=['pickup_id', 'dropoff_id', 'day_of_week', 'hour_of_day']
-[Train] train_rows=2230901 val_rows=653221 hold_rows=3501075
-[Epoch 001] beta=0.1000 train_loss=6.4934 val_loss=4.3817
-[Train] saved checkpoint=outputs/save_data/ryc/baseline/tvae_order_1.pt
-[Train] metrics keys=['best_val', 'cov_te_syn', 'cov_tr_syn', 'cov_tr_te', 'coverage_k', 'coverage_max_samples', 'coverage_space_weight', 'coverage_time_weight', 'day_of_week_chi2', 'day_of_week_jsd', 'dropoff_id_chi2', 'dropoff_id_jsd', 'g_te_syn', 'g_tr_syn', 'g_tr_te', 'hour_of_day_chi2', 'hour_of_day_jsd', 'joint_chi2', 'joint_coverage_real', 'joint_coverage_synth', 'joint_invalid_ratio', 'joint_jsd', 'joint_mode_dropping_ratio', 'joint_unique_real', 'joint_unique_synth', 'n_real', 'n_synth', 'od_chi2', 'od_coverage_real', 'od_coverage_synth', 'od_jsd', 'od_unique_real', 'od_unique_synth', 'pickup_id_chi2', 'pickup_id_jsd', 'sample_time_min', 'time_chi2', 'time_coverage_real', 'time_coverage_synth', 'time_jsd', 'time_unique_real', 'time_unique_synth', 'total_time_min', 'train_time_min', 'w1_te_syn', 'w1_tr_syn', 'w1_tr_te']
