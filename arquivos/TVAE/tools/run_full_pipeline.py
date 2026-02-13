@@ -19,6 +19,8 @@ import train_tvae
 from tools import compare_models, plot_training_curves
 from utils.helpers import set_seed
 from utils.metrics import joint_metrics, od_metrics, save_metrics_json
+from tools.export_run_metrics import export_run_metrics
+from tools.export_training_info import export_training_info
 
 import recalc_downstream_tht_tripgen
 import recalc_metrics_hold
@@ -224,6 +226,109 @@ def _plot_curves(run_dir: Path, out_dir: Path, label: str) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _resolve_export_output_path(
+    *, args: argparse.Namespace, strategy_run_dir: Path
+) -> tuple[Path | None, Path | None]:
+    json_path = args.metrics_export_json
+    csv_path = args.metrics_export_csv
+    if json_path is not None and csv_path is not None:
+        return json_path, csv_path
+    if json_path is not None:
+        return json_path, json_path.parent / "metrics_export.csv"
+    if csv_path is not None:
+        return csv_path.parent / "metrics_export.json", csv_path
+
+    default_dir = args.metrics_export_dir or (strategy_run_dir / "metrics")
+    return default_dir / "metrics_export.json", default_dir / "metrics_export.csv"
+
+
+def _resolve_training_export_output_path(
+    *, args: argparse.Namespace, strategy_run_dir: Path
+) -> tuple[Path | None, Path | None]:
+    json_path = args.training_export_json
+    csv_path = args.training_export_csv
+    if json_path is not None and csv_path is not None:
+        return json_path, csv_path
+    if json_path is not None:
+        return json_path, json_path.parent / "training_export.csv"
+    if csv_path is not None:
+        return csv_path.parent / "training_export.json", csv_path
+    default_dir = args.training_export_dir or (strategy_run_dir / "training")
+    return default_dir / "training_export.json", default_dir / "training_export.csv"
+
+
+def _export_run_metrics(
+    baseline_dir: Path | None,
+    strategy_dir: Path,
+    *,
+    args: argparse.Namespace,
+) -> None:
+    if not args.export_metrics:
+        return
+
+    output_json, output_csv = _resolve_export_output_path(
+        args=args,
+        strategy_run_dir=strategy_dir,
+    )
+    export_run_metrics(
+        strategy_dir,
+        baseline_run_dir=baseline_dir,
+        output_json=output_json,
+        output_csv=output_csv,
+        strict=args.metrics_export_strict,
+        run_label=args.metrics_export_label,
+    )
+
+
+def _export_training_info(
+    baseline_dir: Path | None,
+    strategy_dir: Path,
+    *,
+    args: argparse.Namespace,
+) -> None:
+    if not args.export_training_info:
+        return
+
+    output_json, output_csv = _resolve_training_export_output_path(
+        args=args,
+        strategy_run_dir=strategy_dir,
+    )
+    export_training_info(
+        strategy_run_dir=strategy_dir,
+        baseline_run_dir=baseline_dir,
+        output_json=output_json,
+        output_csv=output_csv,
+        strict=args.training_export_strict,
+        parse_logs=args.training_export_parse_logs,
+        run_label=args.training_export_label,
+    )
+
+
+def _analyze_exports(
+    *,
+    strategy_dir: Path,
+    args: argparse.Namespace,
+    metrics_export_json: Path,
+    training_export_json: Path,
+) -> None:
+    if not args.analyze_exports:
+        return
+
+    # Import lazily to avoid forcing matplotlib dependency unless analysis is requested.
+    from tools import analyze_run_exports
+
+    analyze_run_exports.analyze_run_exports(
+        run_dir=strategy_dir,
+        metrics_export_json=metrics_export_json if not args.analysis_no_metrics else None,
+        training_export_json=training_export_json if not args.analysis_no_training else None,
+        output_dir=args.analysis_dir,
+        analyze_metrics=not args.analysis_no_metrics,
+        analyze_training=not args.analysis_no_training,
+        strict=args.analysis_strict,
+        no_plots=args.analysis_no_plots,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run full TVAE + THT-TripGen pipeline")
     parser.add_argument("--baseline-run-dir", type=Path, default=None)
@@ -305,6 +410,137 @@ def main() -> int:
         help="Seed for downstream sampling/training.",
     )
     parser.add_argument("--comparison-dir", type=Path, default=None)
+    parser.add_argument(
+        "--export-metrics",
+        action="store_true",
+        default=True,
+        help="Write consolidated metrics export files (JSON + CSV).",
+    )
+    parser.add_argument(
+        "--no-export-metrics",
+        dest="export_metrics",
+        action="store_false",
+        help="Do not write consolidated metrics export files.",
+    )
+    parser.add_argument(
+        "--metrics-export-dir",
+        type=Path,
+        default=None,
+        help="Directory for consolidated metrics export (defaults to <strategy-run-dir>/metrics).",
+    )
+    parser.add_argument(
+        "--metrics-export-json",
+        type=Path,
+        default=None,
+        help="Path for consolidated JSON export.",
+    )
+    parser.add_argument(
+        "--metrics-export-csv",
+        type=Path,
+        default=None,
+        help="Path for consolidated CSV export.",
+    )
+    parser.add_argument(
+        "--metrics-export-strict",
+        action="store_true",
+        help="Fail if required metric files are missing.",
+    )
+    parser.add_argument(
+        "--metrics-export-label",
+        default=None,
+        help="Optional label for the metrics export run.",
+    )
+    parser.add_argument(
+        "--export-training-info",
+        action="store_true",
+        default=True,
+        help="Write consolidated training export files (JSON + CSV).",
+    )
+    parser.add_argument(
+        "--no-export-training-info",
+        dest="export_training_info",
+        action="store_false",
+        help="Do not write consolidated training export files.",
+    )
+    parser.add_argument(
+        "--training-export-dir",
+        type=Path,
+        default=None,
+        help="Directory for consolidated training export (defaults to <strategy-run-dir>/training).",
+    )
+    parser.add_argument(
+        "--training-export-json",
+        type=Path,
+        default=None,
+        help="Path for consolidated training info JSON.",
+    )
+    parser.add_argument(
+        "--training-export-csv",
+        type=Path,
+        default=None,
+        help="Path for consolidated training info CSV.",
+    )
+    parser.add_argument(
+        "--training-export-strict",
+        action="store_true",
+        help="Fail if required training artifacts are missing.",
+    )
+    parser.add_argument(
+        "--training-export-parse-logs",
+        action="store_true",
+        dest="training_export_parse_logs",
+        help="Parse epoch-level metrics from text logs.",
+    )
+    parser.add_argument(
+        "--no-training-export-parse-logs",
+        action="store_false",
+        dest="training_export_parse_logs",
+        help="Skip parsing epoch-level metrics from text logs.",
+    )
+    parser.add_argument(
+        "--training-export-label",
+        default=None,
+        help="Optional label for the training export run.",
+    )
+    parser.add_argument(
+        "--analyze-exports",
+        action="store_true",
+        default=False,
+        help="Generate analysis artifacts from consolidated metric and training exports.",
+    )
+    parser.add_argument(
+        "--no-analyze-exports",
+        dest="analyze_exports",
+        action="store_false",
+        help="Skip analysis generation.",
+    )
+    parser.add_argument(
+        "--analysis-dir",
+        type=Path,
+        default=None,
+        help="Directory for analyze_run_exports output (defaults to <strategy-run-dir>/analysis).",
+    )
+    parser.add_argument(
+        "--analysis-no-plots",
+        action="store_true",
+        help="Skip analysis plots in analyze output.",
+    )
+    parser.add_argument(
+        "--analysis-strict",
+        action="store_true",
+        help="Fail analysis if requested exports are missing or malformed.",
+    )
+    parser.add_argument(
+        "--analysis-no-metrics",
+        action="store_true",
+        help="Skip metric comparison analysis while analyzing exports.",
+    )
+    parser.add_argument(
+        "--analysis-no-training",
+        action="store_true",
+        help="Skip training timeline analysis while analyzing exports.",
+    )
+    parser.set_defaults(training_export_parse_logs=True)
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
 
@@ -363,6 +599,30 @@ def main() -> int:
             model=args.downstream_model,
             seed=args.downstream_seed,
         )
+    _export_run_metrics(
+        baseline_dir if not args.skip_baseline else None,
+        tht_tripgen_dir,
+        args=args,
+    )
+    _export_training_info(
+        baseline_dir if not args.skip_baseline else None,
+        tht_tripgen_dir,
+        args=args,
+    )
+    metrics_output_json, _ = _resolve_export_output_path(
+        args=args,
+        strategy_run_dir=tht_tripgen_dir,
+    )
+    training_output_json, _ = _resolve_training_export_output_path(
+        args=args,
+        strategy_run_dir=tht_tripgen_dir,
+    )
+    _analyze_exports(
+        strategy_dir=tht_tripgen_dir,
+        args=args,
+        metrics_export_json=metrics_output_json,
+        training_export_json=training_output_json,
+    )
 
     if args.skip_baseline and not args.skip_comparison:
         print("[Pipeline] baseline skipped; comparison disabled")

@@ -265,6 +265,7 @@ python sample_tht_tripgen.py \
 - `recalc_metrics_hold.py`: recompute TVAE metrics on hold.
 - `recalc_metrics_tht_tripgen_hold.py`: recompute THT-TripGen metrics.
 - `analyze_spatial.py`: deep spatial analysis (OD, degrees, conditionals).
+- `tools/export_run_metrics.py`: exports all available run metrics into one JSON/CSV bundle.
 
 **Suggested commands**
 
@@ -293,6 +294,129 @@ python analyze_spatial.py \
 - Marginals: `*_jsd`, `*_chi2`.
 - OD, temporal, and joint (JSD/chi2/coverage/unique).
 - Paper metrics: temporal W1, graph similarity, KNN coverage, DCR.
+
+### Consolidated metrics export
+
+For each run, use one consolidated summary file bundle:
+
+- `.../<run-dir>/metrics/metrics_export.json` (full nested payload, include file provenance)
+- `.../<run-dir>/metrics/metrics_export.csv` (flat key/value table for external tools)
+
+Where to find the summary in `metrics_export.json`:
+
+- `schema_version`: current export schema version (`2.0.0`)
+- `pipeline_context`: run directories and optional labels used during export
+- `summary`: compact counts and section discovery status
+  - `n_sections`, `n_loaded`, `n_missing`
+  - `loaded_sections`, `missing_sections`
+  - `n_topk_tables`, `n_topk_rows`
+- `sections`: per-section payloads for each metric file (`baseline_*`, `strategy_*`)
+- `tables.topk`: metadata entries for each discovered top-k table CSV
+
+```bash
+python tools/export_run_metrics.py \
+  --strategy-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
+  --output-json /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_export.json \
+  --output-csv /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_export.csv
+```
+
+You can also run with baseline context:
+
+```bash
+python tools/export_run_metrics.py \
+  --strategy-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
+  --baseline-run-dir /path/to/outputs/save_data/baseline \
+  --output-json /tmp/metric_bundle.json \
+  --output-csv /tmp/metric_bundle.csv
+```
+
+`run_full_pipeline.py` writes metrics summaries by default (`--no-export-metrics` to disable):
+
+```bash
+python tools/run_full_pipeline.py \
+  --tht-tripgen-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
+  --build-embeddings \
+  --device cuda
+```
+
+Optional override flags for export:
+
+- `--metrics-export-dir`: export directory (default: `<strategy-run-dir>/metrics`)
+- `--metrics-export-json`: explicit JSON output path
+- `--metrics-export-csv`: explicit CSV output path
+- `--metrics-export-strict`: fail if expected files are missing
+- `--metrics-export-label`: label embedded in bundle summary
+
+### Consolidated training export
+
+For provenance and training-trace analysis (checkpoints, mappings, losses, scalars, log parsing, and artifact hashes), use:
+
+- `.../<strategy-run-dir>/training/training_export.json`
+- `.../<strategy-run-dir>/training/training_export.csv`
+
+Where to find the summary in `training_export.json`:
+
+- `schema_version`: current export schema version (`2.0.0`)
+- `pipeline_context`: run directories and optional labels used during export
+- `summary`: compact counts and coverage for artifact availability
+  - `n_sections`, `n_loaded`, `n_missing`
+  - `n_loss_rows`, `n_scalar_points`, `n_log_events`
+  - `loaded_sections`, `missing_sections`
+- `time_series`: compact series metadata (`loss`, `scalars`, `log`) for each section
+- `sections`: per-section payloads for baseline and strategy training artifacts
+
+```bash
+python tools/export_training_info.py \
+  --strategy-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
+  --baseline-run-dir /path/to/outputs/save_data/baseline \
+  --training-export-json /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/training/training_export.json \
+  --training-export-csv /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/training/training_export.csv
+```
+
+`run_full_pipeline.py` also writes this bundle by default (`--no-export-training-info` to disable). Optional flags:
+
+- `--training-export-dir`: export directory (default: `<strategy-run-dir>/training`)
+- `--training-export-json`: explicit JSON path
+- `--training-export-csv`: explicit CSV path
+- `--training-export-strict`: fail if required artifacts are missing
+- `--training-export-parse-logs`: include epoch-level parsed events from text logs
+- `--training-export-label`: label embedded in bundle summary
+
+### Full run analysis export
+
+`tools/analyze_run_exports.py` ingests the metrics and training export JSON files and produces a richer bundle for plotting and external analysis:
+
+- `.../<strategy-run-dir>/analysis/analysis_report.json`
+- `.../<strategy-run-dir>/analysis/analysis_summary.csv`
+- `.../<strategy-run-dir>/analysis/analysis_metrics_long.csv`
+- `.../<strategy-run-dir>/analysis/analysis_training_long.csv`
+- `.../<strategy-run-dir>/analysis/analysis_tooltips.csv`
+- `.../<strategy-run-dir>/analysis/analysis_report.html`
+- `.../<strategy-run-dir>/analysis/figs/` (optional PNG plots)
+
+```bash
+python tools/analyze_run_exports.py \
+  --run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
+  --metrics-export-json /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_export.json \
+  --training-export-json /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/training/training_export.json \
+  --output-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/analysis
+```
+
+You can also enable this step directly in the pipeline:
+
+```bash
+python tools/run_full_pipeline.py \
+  --tht-tripgen-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
+  --analyze-exports \
+  --analysis-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/analysis
+```
+
+Relevant `analysis_report.json` sections:
+
+- `metric_comparisons`: one row per structural metric per direction (`synth→val`, `synth→hold`, `hold→val`) plus derived deltas.
+- `training_summary`: copied from `training_export.json["summary"]`.
+- `summary.generated_rows`: counts of generated rows in CSV outputs.
+- `generated_files`: absolute/relative paths for artifacts, useful for automation.
 
 ### 7) Experiments and comparisons
 

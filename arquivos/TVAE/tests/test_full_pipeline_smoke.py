@@ -128,3 +128,13 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
 
     hold_vs_val_metrics_path = strategy_dir / "metrics" / "metrics_hold_vs_val_real.json"
     assert hold_vs_val_metrics_path.exists()
+
+    training_export_json = strategy_dir / "training" / "training_export.json"
+    training_export_csv = strategy_dir / "training" / "training_export.csv"
+    assert training_export_json.exists()
+    assert training_export_csv.exists()
+
+    metrics_export_json = strategy_dir / "metrics" / "metrics_export.json"
+    metrics_export_csv = strategy_dir / "metrics" / "metrics_export.csv"
+    assert metrics_export_json.exists()
+    assert metrics_export_csv.exists()
