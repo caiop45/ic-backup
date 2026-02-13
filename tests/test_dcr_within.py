@@ -1,0 +1,29 @@
+import pytest
+import pandas as pd
+
+pytest.importorskip("torch")
+
+from tvae.utils.metrics import dcr_within_quantile
+
+
+def test_dcr_within_quantile_simple():
+    df = pd.DataFrame(
+        {
+            "day_of_week": [0, 0],
+            "hour_of_day": [0, 1],
+            "pickup_id": [1, 1],
+            "dropoff_id": [2, 2],
+        }
+    )
+
+    dcr = dcr_within_quantile(
+        df,
+        alpha=1.0,
+        max_samples=None,
+        chunk_size=2,
+        seed=0,
+        w_time=1.0,
+        w_space=1.0,
+    )
+
+    assert dcr == pytest.approx(1.0 / 12.0)

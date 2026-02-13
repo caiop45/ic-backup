@@ -1,0 +1,47 @@
+nohup: ignorando entrada
+[Pipeline] embeddings found in outputs/topology_cache, reuse
+[Pipeline] training THT-TripGen -> outputs/save_data/ryc/tht_tripgen_20260212_234749
+[THT-TripGen] run_tag=tht_tripgen_20260212_234749
+[THT-TripGen] dropping 80906 rows with negative total_amount
+[THT-TripGen] train_rows=3839929 val_rows=682599 hold_rows=1094596
+[Epoch 001] train_nll=13.0240 val_nll=12.4621
+[Epoch 002] train_nll=12.3762 val_nll=12.1925
+[Epoch 003] train_nll=12.1756 val_nll=12.0320
+[Epoch 004] train_nll=12.0541 val_nll=11.9516
+[Epoch 005] train_nll=11.9863 val_nll=11.9082
+[Epoch 006] train_nll=11.9421 val_nll=11.8692
+[Epoch 007] train_nll=11.9099 val_nll=11.8568
+[Epoch 008] train_nll=11.8850 val_nll=11.8299
+[Epoch 009] train_nll=11.8651 val_nll=11.8157
+[Epoch 010] train_nll=11.8488 val_nll=11.8046
+[Epoch 011] train_nll=11.8360 val_nll=11.7863
+[Epoch 012] train_nll=11.8254 val_nll=11.7876
+[Epoch 013] train_nll=11.8161 val_nll=11.7805
+[Epoch 014] train_nll=11.8081 val_nll=11.7706
+[Epoch 015] train_nll=11.8017 val_nll=11.7699
+[Epoch 016] train_nll=11.7951 val_nll=11.7666
+[Epoch 017] train_nll=11.7898 val_nll=11.7627
+[Epoch 018] train_nll=11.7851 val_nll=11.7545
+[Epoch 019] train_nll=11.7801 val_nll=11.7567
+[Epoch 020] train_nll=11.7767 val_nll=11.7540
+[Epoch 021] train_nll=11.7727 val_nll=11.7514
+[Epoch 022] train_nll=11.7695 val_nll=11.7516
+[Epoch 023] train_nll=11.7670 val_nll=11.7475
+[Epoch 024] train_nll=11.7637 val_nll=11.7473
+[Epoch 025] train_nll=11.7612 val_nll=11.7432
+[Epoch 026] train_nll=11.7585 val_nll=11.7424
+[Epoch 027] train_nll=11.7558 val_nll=11.7409
+[Epoch 028] train_nll=11.7539 val_nll=11.7432
+[Epoch 029] train_nll=11.7517 val_nll=11.7394
+[Epoch 030] train_nll=11.7502 val_nll=11.7373
+[THT-TripGen] metrics saved: outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_tht_tripgen_val.json
+[THT-TripGen] synthetic saved: outputs/save_data/ryc/tht_tripgen_20260212_234749/data/synthetic_tht_tripgen_val.csv
+[THT-TripGen] metrics saved: outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_tht_tripgen_hold.json
+[THT-TripGen] synthetic saved: outputs/save_data/ryc/tht_tripgen_20260212_234749/data/synthetic_tht_tripgen_hold.csv
+[THT-TripGen] saved checkpoint=outputs/save_data/ryc/tht_tripgen_20260212_234749/tht_tripgen.pt
+[THT-TripGen] dropping 80906 rows with negative total_amount
+[THT-TripGen] dropping 80906 rows with negative total_amount
+[Recalc THT-TripGen] sampled 1094596 rows in 0.37 min
+[Recalc THT-TripGen] saved outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics_tht_tripgen_hold.json
+[THT-TripGen] dropping 80906 rows with negative total_amount
+[Downstream THT-TripGen] saved outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/downstream_tht_tripgen_hold.json

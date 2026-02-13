@@ -1,0 +1,16 @@
+{
+  "od_jsd":0.0090266553,
+  "od_chi2":19951.7909572768,
+  "od_coverage_real":0.6291529805,
+  "od_coverage_synth":0.7827951226,
+  "od_unique_real":18571.0,
+  "od_unique_synth":14926.0,
+  "joint_jsd":0.1545052644,
+  "joint_chi2":381467.5203130578,
+  "joint_coverage_real":0.5438644769,
+  "joint_coverage_synth":0.6857965004,
+  "joint_unique_real":297986.0,
+  "joint_unique_synth":236315.0,
+  "joint_mode_dropping_ratio":0.4561355231,
+  "joint_invalid_ratio":0.3142034996
+}

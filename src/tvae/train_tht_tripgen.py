@@ -1,0 +1,853 @@
+from __future__ import annotations
+
+import argparse
+import contextlib
+import math
+import sys
+import time
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+from tvae import config
+from tvae.data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from tvae.data_processing.tht_tripgen_transformer import THTTripGenTransformer
+from tvae.models.tht_tripgen import THTTripGenModel
+from tvae.utils.evaluation import compute_attribute_metrics, compute_metrics, compute_paper_metrics
+from tvae.utils.experiment_logger import ExperimentLogger
+from tvae.utils.metrics import compute_fast_metrics, save_metrics_json
+from tvae.utils.privacy import build_privacy_report, save_privacy_report
+from tvae.utils.serialization import save_checkpoint, save_tht_tripgen_mappings
+
+
+class Tee:
+    def __init__(self, *streams: Iterable):
+        self.streams = streams
+
+    def write(self, data: str) -> None:
+        for stream in self.streams:
+            stream.write(data)
+            stream.flush()
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+
+def _run_dirs(run_tag: str) -> Tuple[Path, Path, Path]:
+    output_dir = Path(config.SAVE_DATA_DIR) / run_tag
+    log_dir = Path(config.LOG_DIR) / run_tag
+    plot_dir = Path(config.PLOT_DIR) / run_tag
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir, log_dir, plot_dir
+
+
+def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
+    """Create per-run subdirectories for metrics JSONs and synthetic samples."""
+    metrics_dir = output_dir / "metrics"
+    data_dir = output_dir / "data"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return metrics_dir, data_dir
+
+
+def _metrics_columns(*dfs: pd.DataFrame) -> List[str]:
+    cols = list(config.OUTPUT_COLUMNS)
+    residual_col = str(getattr(config, "DISTANCE_RESIDUAL_COL", "r"))
+    use_residual = bool(getattr(config, "DISTANCE_USE_RESIDUAL", True))
+    if use_residual and residual_col not in cols:
+        if all(residual_col in df.columns for df in dfs):
+            cols.append(residual_col)
+    return cols
+
+
+def _attribute_columns() -> tuple[list[str], list[str]]:
+    passenger_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_DISCRETE_COLUMNS",
+            [str(getattr(config, "PASSENGER_COL", "passenger_count"))],
+        )
+    )
+    fare_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_CONTINUOUS_COLUMNS",
+            [str(getattr(config, "FARE_COL", "total_amount"))],
+        )
+    )
+    return passenger_cols, fare_cols
+
+
+def _filter_known(df: pd.DataFrame, transformer: THTTripGenTransformer) -> pd.DataFrame:
+    idx = transformer.transform(df, drop_unknown=False)
+    mask = idx.notna().all(axis=1) & idx["r"].notna()
+    return df.loc[mask].reset_index(drop=True)
+
+
+def _tensor_dataset(
+    df_idx: pd.DataFrame,
+    conditional_cols: List[str],
+    *,
+    use_passenger_count: bool,
+    use_total_amount: bool,
+) -> TensorDataset:
+    h = torch.from_numpy(df_idx["h_idx"].to_numpy(dtype=np.int64, copy=True))
+    o = torch.from_numpy(df_idx["o_idx"].to_numpy(dtype=np.int64, copy=True))
+    d = torch.from_numpy(df_idx["d_idx"].to_numpy(dtype=np.int64, copy=True))
+    r = torch.from_numpy(df_idx["r"].to_numpy(dtype=np.float32, copy=True))
+    tensors: List[torch.Tensor] = [h, o, d, r]
+    if use_passenger_count:
+        tensors.append(
+            torch.from_numpy(
+                df_idx["passenger_idx"].to_numpy(dtype=np.int64, copy=True)
+            )
+        )
+    if use_total_amount:
+        tensors.append(
+            torch.from_numpy(
+                df_idx["total_amount_z"].to_numpy(dtype=np.float32, copy=True)
+            )
+        )
+    for col in conditional_cols:
+        tensors.append(
+            torch.from_numpy(df_idx[col].to_numpy(dtype=np.int64, copy=True))
+        )
+    return TensorDataset(*tensors)
+
+
+def _prepare_loader(
+    df_idx: pd.DataFrame,
+    conditional_cols: List[str],
+    *,
+    device: torch.device,
+    batch_size: int,
+    shuffle: bool,
+) -> DataLoader:
+    """Build a DataLoader with CUDA-friendly flags to keep the GPU fed."""
+    dataset = _tensor_dataset(
+        df_idx,
+        conditional_cols,
+        use_passenger_count=bool(getattr(config, "THT_USE_PASSENGER_COUNT", False)),
+        use_total_amount=bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False)),
+    )
+    use_cuda = device.type == "cuda"
+    num_workers_cfg = int(getattr(config, "THT_NUM_WORKERS", getattr(config, "NUM_WORKERS", 0)))
+    num_workers = num_workers_cfg if use_cuda else 0
+    pin_memory_cfg = bool(getattr(config, "THT_PIN_MEMORY", True))
+    pin_memory = pin_memory_cfg and use_cuda
+    persistent_cfg = bool(getattr(config, "THT_PERSISTENT_WORKERS", True))
+    persistent_workers = persistent_cfg and (num_workers > 0)
+    prefetch_factor = int(getattr(config, "THT_PREFETCH_FACTOR", 2))
+    loader_kwargs: Dict[str, object] = {}
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = persistent_workers
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
+    )
+
+
+def _epoch_pass(
+    model: THTTripGenModel,
+    loader: DataLoader,
+    conditional_cols: List[str],
+    device: torch.device,
+    *,
+    train: bool,
+    optimizer: torch.optim.Optimizer | None = None,
+    grad_clip_norm: float = 0.0,
+    logger: ExperimentLogger | None = None,
+    log_every: int = 0,
+    epoch: int | None = None,
+    split_name: str = "train",
+    use_passenger_count: bool = False,
+    use_total_amount: bool = False,
+) -> Dict[str, float]:
+    totals: Dict[str, torch.Tensor] = {
+        "nll_h": torch.zeros((), device=device),
+        "nll_o": torch.zeros((), device=device),
+        "nll_d": torch.zeros((), device=device),
+        "nll_r": torch.zeros((), device=device),
+        "nll_passenger": torch.zeros((), device=device),
+        "nll_total_amount": torch.zeros((), device=device),
+        "nll_total": torch.zeros((), device=device),
+    }
+    batches = 0
+    non_blocking = device.type == "cuda"
+
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    for batch_idx, batch in enumerate(loader, start=1):
+        h_idx, o_idx, d_idx, r, *rest = batch
+        passenger_idx = None
+        total_amount_z = None
+        offset = 0
+        if use_passenger_count:
+            passenger_idx = rest[offset]
+            offset += 1
+        if use_total_amount:
+            total_amount_z = rest[offset]
+            offset += 1
+        u_vals = rest[offset:]
+        h_idx = h_idx.to(device, non_blocking=non_blocking)
+        o_idx = o_idx.to(device, non_blocking=non_blocking)
+        d_idx = d_idx.to(device, non_blocking=non_blocking)
+        r = r.to(device, non_blocking=non_blocking)
+        if passenger_idx is not None:
+            passenger_idx = passenger_idx.to(device, non_blocking=non_blocking)
+        if total_amount_z is not None:
+            total_amount_z = total_amount_z.to(device, non_blocking=non_blocking)
+        u = {
+            col: u_vals[i].to(device, non_blocking=non_blocking)
+            for i, col in enumerate(conditional_cols)
+        }
+
+        if train and optimizer is not None:
+            optimizer.zero_grad(set_to_none=True)
+
+        with torch.set_grad_enabled(train):
+            nll = model.nll(
+                u=u,
+                h_idx=h_idx,
+                o_idx=o_idx,
+                d_idx=d_idx,
+                r=r,
+                passenger_idx=passenger_idx,
+                total_amount_z=total_amount_z,
+            )
+            loss = nll["nll_total"]
+
+        if train and optimizer is not None:
+            loss.backward()
+            if grad_clip_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+            optimizer.step()
+
+        for key in totals:
+            totals[key] += nll[key].detach()
+        batches += 1
+
+        if (
+            logger is not None
+            and log_every > 0
+            and epoch is not None
+            and batch_idx % log_every == 0
+        ):
+            batch_step = epoch * 1_000_000 + batch_idx
+            logger.log_scalars(
+                {
+                    "nll_total": float(nll["nll_total"].detach().item()),
+                    "nll_h": float(nll["nll_h"].detach().item()),
+                    "nll_o": float(nll["nll_o"].detach().item()),
+                    "nll_d": float(nll["nll_d"].detach().item()),
+                    "nll_r": float(nll["nll_r"].detach().item()),
+                    "nll_passenger": float(nll["nll_passenger"].detach().item()),
+                    "nll_total_amount": float(nll["nll_total_amount"].detach().item()),
+                },
+                step=batch_step,
+                prefix=f"{split_name}/batch",
+            )
+
+    if batches == 0:
+        return {key: 0.0 for key in totals}
+    return {key: (val / batches).item() for key, val in totals.items()}
+
+
+def _grad_norm(model: THTTripGenModel) -> float:
+    total = 0.0
+    for param in model.parameters():
+        if param.grad is None:
+            continue
+        total += float(param.grad.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
+
+def _param_norm(model: THTTripGenModel) -> float:
+    total = 0.0
+    for param in model.parameters():
+        total += float(param.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
+
+def _eval_sample_size(n_rows: int) -> int:
+    ratio = float(getattr(config, "THT_EVAL_SAMPLE_RATIO", 1.0))
+    n_eval = int(np.ceil(n_rows * ratio))
+    n_eval = max(1, n_eval) if n_rows > 0 else 0
+    return min(n_eval, n_rows)
+
+
+def _sample_conditioned(
+    model: THTTripGenModel,
+    eval_idx: pd.DataFrame,
+    conditional_cols: List[str],
+    *,
+    temperature: float,
+    device: torch.device,
+    batch_size: int = 10000,
+) -> pd.DataFrame:
+    model.eval()
+    outputs: Dict[str, List[np.ndarray]] = {}
+    non_blocking = device.type == "cuda"
+
+    with torch.no_grad():
+        for start in range(0, len(eval_idx), batch_size):
+            end = min(start + batch_size, len(eval_idx))
+            batch_df = eval_idx.iloc[start:end]
+            u = {
+                col: torch.from_numpy(
+                    batch_df[col].to_numpy(dtype=np.int64, copy=True)
+                ).to(device, non_blocking=non_blocking)
+                for col in conditional_cols
+            }
+            samples = model.sample(
+                n=end - start,
+                u=u,
+                temperature=temperature,
+            )
+
+            for key, tensor in samples.items():
+                outputs.setdefault(key, []).append(tensor.detach().cpu().numpy())
+
+    data = {key: np.concatenate(chunks) for key, chunks in outputs.items()}
+    return pd.DataFrame(data)
+
+
+def _load_zone_embeddings() -> Tuple[torch.Tensor, Path, str]:
+    cache_dir = Path(config.THT_TOPOLOGY_CACHE_DIR)
+    comb_path = cache_dir / "Ecomb.pt"
+    func_path = cache_dir / "Efunc.pt"
+    if comb_path.exists():
+        emb_path = comb_path
+        source = "Ecomb"
+    elif func_path.exists():
+        emb_path = func_path
+        source = "Efunc"
+    else:
+        raise FileNotFoundError(
+            f"No frozen embeddings found in {cache_dir} (expected Ecomb.pt or Efunc.pt)"
+        )
+
+    embeddings = torch.load(emb_path, map_location="cpu").float()
+    return embeddings, emb_path, source
+
+
+def train_tht_tripgen(*, run_tag: str, device: torch.device) -> None:
+    output_dir, log_dir, plot_dir = _run_dirs(run_tag)
+    metrics_dir, data_dir = _run_output_subdirs(output_dir)
+    log_path = log_dir / "train_tht_tripgen.log"
+
+    with log_path.open("w", encoding="utf-8") as fh, contextlib.redirect_stdout(
+        Tee(sys.stdout, fh)
+    ), ExperimentLogger(output_dir, run_name=run_tag, enable_tb=None) as logger:
+        print(f"[THT-TripGen] run_tag={run_tag}")
+
+        raw_train_df, raw_val_df, raw_hold_df = load_and_split_tht_tripgen()
+        print(
+            f"[THT-TripGen] train_rows={len(raw_train_df)} val_rows={len(raw_val_df)} hold_rows={len(raw_hold_df)}"
+        )
+
+        transformer = THTTripGenTransformer().fit(raw_train_df)
+        train_df = _filter_known(raw_train_df, transformer)
+        val_df = _filter_known(raw_val_df, transformer)
+        hold_df = _filter_known(raw_hold_df, transformer)
+
+        train_idx = transformer.transform(train_df, drop_unknown=True)
+        val_idx = transformer.transform(val_df, drop_unknown=True)
+        hold_idx = transformer.transform(hold_df, drop_unknown=True)
+
+        conditional_cols = list(transformer.conditional_columns)
+        cond_card = transformer.conditional_idx_cardinalities
+
+        zone_embeddings, emb_path, emb_source = _load_zone_embeddings()
+        if zone_embeddings.shape[0] != transformer.num_zones:
+            raise ValueError("Frozen embeddings num_zones mismatch with transformer")
+
+        destination_head_type = getattr(
+            config, "THT_DESTINATION_HEAD_TYPE", config.THT_DEST_HEAD_TYPE
+        )
+
+        model = THTTripGenModel(
+            num_zones=transformer.num_zones,
+            num_time_bins=transformer.num_time_bins,
+            conditional_cardinalities=cond_card,
+            frozen_zone_embeddings=zone_embeddings,
+            cond_emb_dim=int(getattr(config, "THT_COND_EMB_DIM", config.THT_COND_EMB_DIM)),
+            time_emb_dim=int(getattr(config, "THT_TIME_EMB_DIM", config.THT_TIME_EMB_DIM)),
+            origin_emb_dim=int(getattr(config, "THT_ORIGIN_EMB_DIM", config.THT_ORIGIN_EMB_DIM)),
+            context_mlp_hidden=int(getattr(config, "THT_MODEL_HIDDEN", config.THT_MODEL_HIDDEN)),
+            context_mlp_layers=int(getattr(config, "THT_MODEL_LAYERS", config.THT_MODEL_LAYERS)),
+            dropout=float(getattr(config, "THT_MODEL_DROPOUT", config.THT_MODEL_DROPOUT)),
+            destination_head_type=str(destination_head_type),
+            hybrid_residual_hidden=int(
+                getattr(config, "THT_HYBRID_RESIDUAL_HIDDEN", config.THT_HYBRID_RESIDUAL_HIDDEN)
+            ),
+            hybrid_residual_weight_init=float(
+                getattr(
+                    config,
+                    "THT_HYBRID_RESIDUAL_WEIGHT_INIT",
+                    config.THT_HYBRID_RESIDUAL_WEIGHT_INIT,
+                )
+            ),
+            use_passenger_count=bool(getattr(config, "THT_USE_PASSENGER_COUNT", False)),
+            passenger_cardinality=transformer.passenger_cardinality
+            if bool(getattr(config, "THT_USE_PASSENGER_COUNT", False))
+            else None,
+            use_total_amount=bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False)),
+            total_amount_sigma_floor=float(
+                getattr(
+                    config,
+                    "THT_TOTAL_AMOUNT_SIGMA_FLOOR",
+                    config.THT_TOTAL_AMOUNT_SIGMA_FLOOR,
+                )
+            ),
+            min_r_eps=float(getattr(config, "THT_MIN_R_EPS", config.THT_MIN_R_EPS)),
+            residual_num_layers=int(getattr(config, "THT_RESIDUAL_NUM_LAYERS", config.THT_RESIDUAL_NUM_LAYERS)),
+            residual_num_bins=int(getattr(config, "THT_RESIDUAL_NUM_BINS", config.THT_RESIDUAL_NUM_BINS)),
+            residual_context_hidden=int(
+                getattr(config, "THT_RESIDUAL_CONTEXT_HIDDEN", config.THT_RESIDUAL_CONTEXT_HIDDEN)
+            ),
+            residual_min_bin_width=float(
+                getattr(config, "THT_RESIDUAL_MIN_BIN_WIDTH", config.THT_RESIDUAL_MIN_BIN_WIDTH)
+            ),
+            residual_min_bin_height=float(
+                getattr(config, "THT_RESIDUAL_MIN_BIN_HEIGHT", config.THT_RESIDUAL_MIN_BIN_HEIGHT)
+            ),
+            residual_min_deriv=float(
+                getattr(config, "THT_RESIDUAL_MIN_DERIV", config.THT_RESIDUAL_MIN_DERIV)
+            ),
+            residual_eps=float(getattr(config, "THT_RESIDUAL_EPS", config.THT_RESIDUAL_EPS)),
+        ).to(device)
+
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=float(getattr(config, "THT_LR", 1e-3)),
+            weight_decay=float(getattr(config, "THT_WEIGHT_DECAY", 0.0)),
+        )
+
+        batch_size = int(getattr(config, "THT_BATCH_SIZE", 1024))
+        use_passenger_count = bool(getattr(config, "THT_USE_PASSENGER_COUNT", False))
+        use_total_amount = bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False))
+        train_loader = _prepare_loader(
+            train_idx,
+            conditional_cols,
+            device=device,
+            batch_size=batch_size,
+            shuffle=True,
+        )
+        val_loader = _prepare_loader(
+            val_idx,
+            conditional_cols,
+            device=device,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+
+        best_val = float("inf")
+        best_state = None
+        epochs_no_improve = 0
+        loss_rows: List[Dict[str, float]] = []
+
+        train_start = time.monotonic()
+        epochs = int(getattr(config, "THT_EPOCHS", 30))
+        log_every = int(getattr(config, "THT_LOG_BATCH_EVERY", 0))
+        flow_every = int(getattr(config, "THT_FLOW_DIAG_EVERY_EPOCHS", 0))
+        monitor_every = int(getattr(config, "THT_MONITOR_METRICS_EVERY_EPOCHS", 0))
+        monitor_max = int(getattr(config, "THT_MONITOR_MAX_SAMPLES", 0))
+
+        diag_batch = None
+        for batch in val_loader:
+            diag_batch = batch
+            break
+
+        for epoch in range(1, epochs + 1):
+            train_nll = _epoch_pass(
+                model,
+                train_loader,
+                conditional_cols,
+                device,
+                train=True,
+                optimizer=optimizer,
+                grad_clip_norm=float(getattr(config, "THT_GRAD_CLIP_NORM", 0.0)),
+                logger=logger if log_every > 0 else None,
+                log_every=log_every,
+                epoch=epoch,
+                split_name="train",
+                use_passenger_count=use_passenger_count,
+                use_total_amount=use_total_amount,
+            )
+            val_nll = _epoch_pass(
+                model,
+                val_loader,
+                conditional_cols,
+                device,
+                train=False,
+                use_passenger_count=use_passenger_count,
+                use_total_amount=use_total_amount,
+            )
+
+            loss_rows.append(
+                {
+                    "epoch": epoch,
+                    "train_nll_total": train_nll["nll_total"],
+                    "train_nll_h": train_nll["nll_h"],
+                    "train_nll_o": train_nll["nll_o"],
+                    "train_nll_d": train_nll["nll_d"],
+                    "train_nll_r": train_nll["nll_r"],
+                    "train_nll_passenger": train_nll["nll_passenger"],
+                    "train_nll_total_amount": train_nll["nll_total_amount"],
+                    "val_nll_total": val_nll["nll_total"],
+                    "val_nll_h": val_nll["nll_h"],
+                    "val_nll_o": val_nll["nll_o"],
+                    "val_nll_d": val_nll["nll_d"],
+                    "val_nll_r": val_nll["nll_r"],
+                    "val_nll_passenger": val_nll["nll_passenger"],
+                    "val_nll_total_amount": val_nll["nll_total_amount"],
+                }
+            )
+
+            logger.log_scalars(
+                {
+                    "nll_total": train_nll["nll_total"],
+                    "nll_h": train_nll["nll_h"],
+                    "nll_o": train_nll["nll_o"],
+                    "nll_d": train_nll["nll_d"],
+                    "nll_r": train_nll["nll_r"],
+                    "nll_passenger": train_nll["nll_passenger"],
+                    "nll_total_amount": train_nll["nll_total_amount"],
+                },
+                step=epoch,
+                prefix="train",
+            )
+            logger.log_scalars(
+                {
+                    "nll_total": val_nll["nll_total"],
+                    "nll_h": val_nll["nll_h"],
+                    "nll_o": val_nll["nll_o"],
+                    "nll_d": val_nll["nll_d"],
+                    "nll_r": val_nll["nll_r"],
+                    "nll_passenger": val_nll["nll_passenger"],
+                    "nll_total_amount": val_nll["nll_total_amount"],
+                },
+                step=epoch,
+                prefix="val",
+            )
+            logger.log_scalar("grad_norm", _grad_norm(model), step=epoch, split="train")
+            logger.log_scalar("param_norm", _param_norm(model), step=epoch, split="train")
+
+            if flow_every > 0 and epoch % flow_every == 0 and diag_batch is not None:
+                h_idx, o_idx, d_idx, r, *u_vals = diag_batch
+                optional_offset = 0
+                if use_passenger_count:
+                    optional_offset += 1
+                if use_total_amount:
+                    optional_offset += 1
+                if len(u_vals) < optional_offset + len(conditional_cols):
+                    raise RuntimeError(
+                        "Unexpected batch layout while running residual flow diagnostics"
+                    )
+                non_blocking = device.type == "cuda"
+                u = {
+                    col: u_vals[optional_offset + i].to(device, non_blocking=non_blocking)
+                    for i, col in enumerate(conditional_cols)
+                }
+                h_idx = h_idx.to(device, non_blocking=non_blocking)
+                o_idx = o_idx.to(device, non_blocking=non_blocking)
+                d_idx = d_idx.to(device, non_blocking=non_blocking)
+                r = r.to(device, non_blocking=non_blocking)
+                was_training = model.training
+                model.eval()
+                with torch.no_grad():
+                    _, diag = model.residual_log_prob(
+                        u=u,
+                        h_idx=h_idx,
+                        o_idx=o_idx,
+                        d_idx=d_idx,
+                        r=r,
+                        return_layer_logdet=True,
+                    )
+                if was_training:
+                    model.train()
+                for key, value in diag.items():
+                    logger.log_scalar(f"flow/{key}", float(value), step=epoch, split=None)
+
+            if monitor_every > 0 and epoch % monitor_every == 0 and len(val_idx) > 0:
+                n_monitor = min(len(val_idx), monitor_max) if monitor_max > 0 else len(val_idx)
+                if n_monitor > 0:
+                    sample_idx = val_idx.sample(
+                        n=n_monitor, random_state=config.GLOBAL_SEED
+                    ).index
+                    val_idx_sample = val_idx.loc[sample_idx].reset_index(drop=True)
+                    val_df_sample = val_df.loc[sample_idx].reset_index(drop=True)
+
+                    with torch.no_grad():
+                        synth_idx = _sample_conditioned(
+                            model,
+                            val_idx_sample,
+                            conditional_cols,
+                            temperature=float(
+                                getattr(config, "THT_TEMPERATURE", config.THT_SAMPLE_TEMPERATURE)
+                            ),
+                            device=device,
+                        )
+
+                    synth_decoded = transformer.decode(synth_idx)
+                    synth_metrics_df = synth_decoded[config.OUTPUT_COLUMNS].copy()
+                    eval_metrics_df = val_df_sample[config.OUTPUT_COLUMNS].copy()
+
+                    fast_metrics = compute_fast_metrics(
+                        eval_metrics_df,
+                        synth_metrics_df,
+                        do_coverage=bool(
+                            getattr(config, "THT_MONITOR_DO_COVERAGE", False)
+                        ),
+                        coverage_max_samples=int(
+                            getattr(config, "THT_MONITOR_COVERAGE_MAX_SAMPLES", 0) or 0
+                        ),
+                        seed=config.GLOBAL_SEED,
+                    )
+                    logger.log_scalars(fast_metrics, step=epoch, prefix="metrics")
+
+            print(
+                f"[Epoch {epoch:03d}] train_nll={train_nll['nll_total']:.4f} "
+                f"val_nll={val_nll['nll_total']:.4f}"
+            )
+
+            if best_val - val_nll["nll_total"] > config.MIN_DELTA:
+                best_val = val_nll["nll_total"]
+                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= config.PATIENCE:
+                print("[THT-TripGen] early stopping")
+                break
+
+        train_time_min = (time.monotonic() - train_start) / 60.0
+
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+        loss_df = pd.DataFrame(loss_rows)
+        loss_df.to_csv(output_dir / "loss_tht_tripgen.csv", index=False)
+
+        save_tht_tripgen_mappings(output_dir / "mappings_tht_tripgen.json", transformer)
+
+        meta = {
+            "num_zones": transformer.num_zones,
+            "num_time_bins": transformer.num_time_bins,
+            "conditional_cardinalities": cond_card,
+            "zone_embeddings_source": emb_source,
+            "zone_embeddings_dim": int(zone_embeddings.shape[1]),
+            "zone_embeddings_path": str(emb_path),
+            "cond_emb_dim": int(getattr(config, "THT_COND_EMB_DIM", config.THT_COND_EMB_DIM)),
+            "time_emb_dim": int(getattr(config, "THT_TIME_EMB_DIM", config.THT_TIME_EMB_DIM)),
+            "origin_emb_dim": int(getattr(config, "THT_ORIGIN_EMB_DIM", config.THT_ORIGIN_EMB_DIM)),
+            "context_mlp_hidden": int(getattr(config, "THT_MODEL_HIDDEN", config.THT_MODEL_HIDDEN)),
+            "context_mlp_layers": int(getattr(config, "THT_MODEL_LAYERS", config.THT_MODEL_LAYERS)),
+            "dropout": float(getattr(config, "THT_MODEL_DROPOUT", config.THT_MODEL_DROPOUT)),
+            "destination_head_type": str(destination_head_type),
+            "hybrid_residual_hidden": int(
+                getattr(config, "THT_HYBRID_RESIDUAL_HIDDEN", config.THT_HYBRID_RESIDUAL_HIDDEN)
+            ),
+            "hybrid_residual_weight_init": float(
+                getattr(
+                    config,
+                    "THT_HYBRID_RESIDUAL_WEIGHT_INIT",
+                    config.THT_HYBRID_RESIDUAL_WEIGHT_INIT,
+                )
+            ),
+            "use_passenger_count": bool(getattr(config, "THT_USE_PASSENGER_COUNT", False)),
+            "passenger_cardinality": transformer.passenger_cardinality,
+            "use_total_amount": bool(getattr(config, "THT_USE_TOTAL_AMOUNT", False)),
+            "total_amount_sigma_floor": float(
+                getattr(
+                    config,
+                    "THT_TOTAL_AMOUNT_SIGMA_FLOOR",
+                    config.THT_TOTAL_AMOUNT_SIGMA_FLOOR,
+                )
+            ),
+            "min_r_eps": float(getattr(config, "THT_MIN_R_EPS", config.THT_MIN_R_EPS)),
+            "residual_num_layers": int(getattr(config, "THT_RESIDUAL_NUM_LAYERS", config.THT_RESIDUAL_NUM_LAYERS)),
+            "residual_num_bins": int(getattr(config, "THT_RESIDUAL_NUM_BINS", config.THT_RESIDUAL_NUM_BINS)),
+            "residual_context_hidden": int(
+                getattr(config, "THT_RESIDUAL_CONTEXT_HIDDEN", config.THT_RESIDUAL_CONTEXT_HIDDEN)
+            ),
+            "residual_min_bin_width": float(
+                getattr(config, "THT_RESIDUAL_MIN_BIN_WIDTH", config.THT_RESIDUAL_MIN_BIN_WIDTH)
+            ),
+            "residual_min_bin_height": float(
+                getattr(config, "THT_RESIDUAL_MIN_BIN_HEIGHT", config.THT_RESIDUAL_MIN_BIN_HEIGHT)
+            ),
+            "residual_min_deriv": float(
+                getattr(config, "THT_RESIDUAL_MIN_DERIV", config.THT_RESIDUAL_MIN_DERIV)
+            ),
+            "residual_eps": float(getattr(config, "THT_RESIDUAL_EPS", config.THT_RESIDUAL_EPS)),
+        }
+
+        checkpoint_path = output_dir / "tht_tripgen.pt"
+        save_checkpoint(
+            checkpoint_path,
+            model_state=model.state_dict(),
+            meta=meta,
+            optimizer_state=optimizer.state_dict(),
+            epoch=epoch,
+            metrics={"best_val": best_val},
+        )
+
+        def _evaluate_split(
+            *,
+            split_name: str,
+            eval_df: pd.DataFrame,
+            eval_idx: pd.DataFrame,
+            save_synth: bool,
+        ) -> None:
+            if len(eval_idx) == 0:
+                print(f"[THT-TripGen] skip {split_name}: empty split")
+                return
+
+            n_eval = _eval_sample_size(len(eval_idx))
+            if n_eval < len(eval_idx):
+                sample_idx = eval_idx.sample(n=n_eval, random_state=config.GLOBAL_SEED).index
+                eval_idx_sample = eval_idx.loc[sample_idx].reset_index(drop=True)
+                eval_df_sample = eval_df.loc[sample_idx].reset_index(drop=True)
+            else:
+                eval_idx_sample = eval_idx
+                eval_df_sample = eval_df
+
+            sample_start = time.monotonic()
+            synth_idx = _sample_conditioned(
+                model,
+                eval_idx_sample,
+                conditional_cols,
+                temperature=float(getattr(config, "THT_TEMPERATURE", config.THT_SAMPLE_TEMPERATURE)),
+                device=device,
+            )
+            sample_time_min = (time.monotonic() - sample_start) / 60.0
+
+            synth_decoded = transformer.decode(synth_idx)
+            metrics_cols = _metrics_columns(eval_df_sample, synth_decoded, train_df)
+            synth_metrics_df = synth_decoded[metrics_cols].copy()
+            eval_metrics_df = eval_df_sample[metrics_cols].copy()
+
+            metrics: Dict[str, float | str] = compute_metrics(
+                eval_metrics_df,
+                synth_metrics_df,
+                order_key=f"tht_tripgen_{split_name}",
+                output_dir=metrics_dir,
+                plot_dir=plot_dir,
+            )
+            paper_metrics = compute_paper_metrics(train_df, eval_df_sample, synth_decoded)
+            metrics.update(paper_metrics)
+            if bool(getattr(config, "EVAL_ENABLE_ATTRIBUTE_METRICS", True)):
+                passenger_cols, fare_cols = _attribute_columns()
+                attr_metrics = compute_attribute_metrics(
+                    eval_df_sample,
+                    synth_decoded,
+                    passenger_cols=passenger_cols,
+                    fare_cols=fare_cols,
+                    plot_dir=plot_dir,
+                    order_key=f"tht_tripgen_{split_name}",
+                )
+                metrics.update(attr_metrics)
+            metrics["eval_split"] = split_name
+            metrics["n_train"] = float(len(train_df))
+            metrics["n_eval"] = float(len(eval_metrics_df))
+            metrics["n_synth"] = float(len(synth_metrics_df))
+            metrics["best_val"] = float(best_val)
+            metrics["train_time_min"] = float(train_time_min)
+            metrics["sample_time_min"] = float(sample_time_min)
+            metrics["total_time_min"] = float(train_time_min + sample_time_min)
+
+            if bool(getattr(config, "PRIVACY_REPORT_ENABLE", True)):
+                report, match_metrics = build_privacy_report(
+                    train_df,
+                    synth_decoded,
+                    discrete_cols=config.OUTPUT_COLUMNS,
+                    r_col=str(getattr(config, "DISTANCE_RESIDUAL_COL", "r")),
+                    r_decimals=int(getattr(config, "PRIVACY_MATCH_R_DECIMALS", 2)),
+                    max_samples=getattr(config, "DCR_MAX_SAMPLES", None),
+                    seed=config.GLOBAL_SEED,
+                    chunk_size=getattr(config, "DCR_CHUNK_SIZE", 1024),
+                    w_time=getattr(config, "COVERAGE_TIME_WEIGHT", 1.0),
+                    w_space=getattr(config, "COVERAGE_SPACE_WEIGHT", 1.0),
+                    w_residual=getattr(config, "DCR_RESIDUAL_WEIGHT", 1.0),
+                    use_residual=getattr(config, "DISTANCE_USE_RESIDUAL", True),
+                    residual_col=getattr(config, "DISTANCE_RESIDUAL_COL", "r"),
+                )
+                metrics.update(match_metrics)
+                report_path = metrics_dir / f"privacy_report_tht_tripgen_{split_name}.json"
+                save_privacy_report(
+                    report,
+                    report_path,
+                    split=split_name,
+                    n_train=float(len(train_df)),
+                    n_synth=float(len(synth_decoded)),
+                    r_decimals=int(getattr(config, "PRIVACY_MATCH_R_DECIMALS", 2)),
+                )
+
+            metrics_path = metrics_dir / f"metrics_tht_tripgen_{split_name}.json"
+            save_metrics_json(metrics, metrics_path)
+
+            if split_name == "val":
+                save_metrics_json(metrics, output_dir / "metrics_tht_tripgen.json")
+            elif split_name == "hold":
+                save_metrics_json(metrics, output_dir / "metrics_tht_tripgen_hold.json")
+
+            synth_path = data_dir / f"synthetic_tht_tripgen_{split_name}.csv"
+            synth_decoded.to_csv(synth_path, index=False)
+            if save_synth:
+                synth_decoded.to_csv(
+                    output_dir / "synthetic_tht_tripgen_hold.csv", index=False
+                )
+
+            print(f"[THT-TripGen] metrics saved: {metrics_path}")
+            print(f"[THT-TripGen] synthetic saved: {synth_path}")
+
+        # Keep val/hold evaluation separate (val for selection, hold for reporting).
+        _evaluate_split(split_name="val", eval_df=val_df, eval_idx=val_idx, save_synth=False)
+        if len(hold_df) > 0:
+            _evaluate_split(
+                split_name="hold",
+                eval_df=hold_df,
+                eval_idx=hold_idx,
+                save_synth=True,
+            )
+
+        print(f"[THT-TripGen] saved checkpoint={checkpoint_path}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Train THT-TripGen model")
+    parser.add_argument("--run-tag", default="tht_tripgen", help="output subdir name")
+    parser.add_argument("--device", default=None, help="torch device override")
+    args = parser.parse_args()
+
+    device = (
+        torch.device(args.device)
+        if args.device is not None
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    )
+
+    train_tht_tripgen(run_tag=args.run_tag, device=device)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

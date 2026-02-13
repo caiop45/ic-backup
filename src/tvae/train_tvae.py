@@ -1,0 +1,788 @@
+from __future__ import annotations
+
+import argparse
+import contextlib
+import math
+import sys
+import time
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple, TypedDict
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
+
+from tvae import config
+from tvae.data_processing.loader import load_and_split
+from tvae.data_processing.transformer import CategoricalTransformer
+from tvae.models.tvae_ar import TVAEAutoregressive
+from tvae.utils.evaluation import compute_metrics, compute_paper_metrics
+from tvae.utils.experiment_logger import ExperimentLogger
+from tvae.utils.helpers import set_seed
+from tvae.utils.metrics import compute_fast_metrics, joint_counts, save_metrics_json
+from tvae.utils.serialization import save_checkpoint, save_mappings
+
+# Optional tee that duplicates logs to both stdout and the file logger.
+class Tee:
+    def __init__(self, *streams: Iterable):
+        self.streams = streams
+
+    def write(self, data: str) -> None:
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+
+    def flush(self) -> None:
+        for s in self.streams:
+            s.flush()
+
+# KL annealing weight (beta) schedule for the VAE regularizer.
+def _kl_beta(epoch: int) -> float:
+    if config.KL_ANNEAL_EPOCHS <= 0:
+        return config.KL_BETA_END
+    progress = min(1.0, epoch / float(config.KL_ANNEAL_EPOCHS))
+    return config.KL_BETA_START + (config.KL_BETA_END - config.KL_BETA_START) * progress
+
+# Keep only categories seen in the training split.
+# This keeps train/validation data aligned for consistent indexing.
+def _filter_known(df: pd.DataFrame, transformer: CategoricalTransformer) -> pd.DataFrame:
+    mask = np.ones(len(df), dtype=bool)
+    for col in transformer.columns:
+        allowed = set(transformer.categories[col])
+        mask &= df[col].isin(allowed)
+    return df.loc[mask].reset_index(drop=True)
+
+
+def _prepare_dataloaders(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    transformer: CategoricalTransformer,
+) -> Tuple[DataLoader, DataLoader, pd.DataFrame, pd.DataFrame]:
+    # Map categorical values to contiguous integer ids required by one-hot encoding.
+    # This avoids sparse index gaps and produces a compact index range (0..N-1).
+    train_idx = transformer.transform(train_df, drop_unknown=True)
+    val_idx = transformer.transform(val_df, drop_unknown=True)
+
+    # One-hot encode train and validation tensors.
+    x_train = transformer.one_hot_encode(train_idx)
+    x_val = transformer.one_hot_encode(val_idx)
+
+    train_ds = TensorDataset(
+        torch.from_numpy(x_train).float(),
+        torch.from_numpy(train_idx.to_numpy(dtype=np.int64)),
+    )
+    val_ds = TensorDataset(
+        torch.from_numpy(x_val).float(),
+        torch.from_numpy(val_idx.to_numpy(dtype=np.int64)),
+    )
+    # Build train and validation batch loaders.
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=config.BATCH_SIZE,
+        shuffle=True,
+        drop_last=False,
+        num_workers=config.NUM_WORKERS,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=config.BATCH_SIZE,
+        shuffle=False,
+        drop_last=False,
+        num_workers=config.NUM_WORKERS,
+    )
+
+    return train_loader, val_loader, train_idx, val_idx
+
+# Dropoff conditional log-probability p(dropoff | pickup) for KL regularization.
+def _build_dropoff_conditional_log_q(
+    train_idx: pd.DataFrame,
+    *,
+    pickup_size: int,
+    dropoff_size: int,
+    eps: float,
+) -> np.ndarray:
+    counts = np.zeros((pickup_size, dropoff_size), dtype=np.float64)
+    pickup = train_idx["pickup_id"].to_numpy(dtype=np.int64)
+    dropoff = train_idx["dropoff_id"].to_numpy(dtype=np.int64)
+    np.add.at(counts, (pickup, dropoff), 1)
+    row_sum = counts.sum(axis=1, keepdims=True)
+    probs = (counts + eps) / (row_sum + eps * dropoff_size)
+    return np.log(probs)
+
+
+def _build_pickup_log_q(
+    train_idx: pd.DataFrame,
+    *,
+    pickup_size: int,
+    eps: float,
+) -> np.ndarray:
+    counts = np.zeros((pickup_size,), dtype=np.float64)
+    pickup = train_idx["pickup_id"].to_numpy(dtype=np.int64)
+    np.add.at(counts, pickup, 1)
+    total = counts.sum()
+    probs = (counts + eps) / (total + eps * pickup_size)
+    return np.log(probs)
+
+# Align decoder inputs to the TVAE autoregressive order expected by the model.
+def _build_y_indices(
+    idx_batch: torch.Tensor, col_to_idx: Dict[str, int], order: List[str]
+) -> Dict[str, torch.Tensor]:
+    return {col: idx_batch[:, col_to_idx[col]] for col in order}
+
+# Run one forward/backward pass for one split and return aggregate statistics.
+def _epoch_pass(
+    model: TVAEAutoregressive,
+    loader: DataLoader,
+    col_to_idx: Dict[str, int],
+    order: List[str],
+    device: torch.device,
+    beta: float,
+    *,
+    pair_kl_log_q: torch.Tensor | None = None,
+    pair_kl_weight: float = 0.0,
+    pickup_kl_log_q: torch.Tensor | None = None,
+    pickup_kl_weight: float = 0.0,
+    train: bool,
+    optimizer: torch.optim.Optimizer | None = None,
+) -> "EpochStats":
+    total_loss = 0.0
+    total_ce = 0.0
+    total_kl = 0.0
+    total_pair_kl = 0.0
+    total_pickup_kl = 0.0
+    total_batches = 0
+    per_col_ce_sum = {col: 0.0 for col in order}
+    per_col_correct = {col: 0.0 for col in order}
+    per_col_count = {col: 0.0 for col in order}
+
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    for x_batch, idx_batch in loader:
+        x_batch = x_batch.to(device)
+        idx_batch = idx_batch.to(device)
+        y_indices = _build_y_indices(idx_batch, col_to_idx, order)
+
+        if train:
+            optimizer.zero_grad()
+
+        with torch.set_grad_enabled(train):
+            logits, mu, logvar = model(x_batch, y_indices)
+            ce_loss = 0.0
+            for col in order:
+                weight = 1.0
+                if col == "pickup_id":
+                    weight = config.PICKUP_LOSS_WEIGHT
+                elif col == "dropoff_id":
+                    weight = config.DROPOFF_LOSS_WEIGHT
+                ce_val = F.cross_entropy(logits[col], y_indices[col])
+                ce_loss = ce_loss + weight * ce_val
+                per_col_ce_sum[col] += float(ce_val.item())
+                preds = logits[col].argmax(dim=1)
+                per_col_correct[col] += float((preds == y_indices[col]).sum().item())
+                per_col_count[col] += float(y_indices[col].numel())
+            kld = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+            pair_kl = torch.tensor(0.0, device=device)
+            if pair_kl_log_q is not None and pair_kl_weight > 0.0:
+                log_p = F.log_softmax(logits["dropoff_id"], dim=1)
+                p = log_p.exp()
+                pickup_idx = y_indices["pickup_id"]
+                log_q = pair_kl_log_q[pickup_idx]
+                pair_kl = torch.sum(p * (log_p - log_q), dim=1).mean()
+            pickup_kl = torch.tensor(0.0, device=device)
+            if pickup_kl_log_q is not None and pickup_kl_weight > 0.0:
+                log_p = F.log_softmax(logits["pickup_id"], dim=1)
+                p = log_p.exp()
+                pickup_kl = torch.sum(p * (log_p - pickup_kl_log_q), dim=1).mean()
+            loss = (
+                ce_loss
+                + beta * kld
+                + pair_kl_weight * pair_kl
+                + pickup_kl_weight * pickup_kl
+            )
+
+        if train:
+            loss.backward()
+            optimizer.step()
+
+        total_loss += float(loss.item())
+        total_ce += float(ce_loss.item())
+        total_kl += float(kld.item())
+        total_pair_kl += float(pair_kl.item())
+        total_pickup_kl += float(pickup_kl.item())
+        total_batches += 1
+
+    if total_batches == 0:
+        return {
+            "loss": 0.0,
+            "recon": 0.0,
+            "kl": 0.0,
+            "pair_kl": 0.0,
+            "pickup_kl": 0.0,
+            "per_col_ce": {col: 0.0 for col in order},
+            "per_col_acc": {col: 0.0 for col in order},
+        }
+    per_col_ce = {col: per_col_ce_sum[col] / total_batches for col in order}
+    per_col_acc = {
+        col: (per_col_correct[col] / per_col_count[col]) if per_col_count[col] > 0 else 0.0
+        for col in order
+    }
+    return {
+        "loss": total_loss / total_batches,
+        "recon": total_ce / total_batches,
+        "kl": total_kl / total_batches,
+        "pair_kl": total_pair_kl / total_batches,
+        "pickup_kl": total_pickup_kl / total_batches,
+        "per_col_ce": per_col_ce,
+        "per_col_acc": per_col_acc,
+    }
+
+
+class EpochStats(TypedDict):
+    loss: float
+    recon: float
+    kl: float
+    pair_kl: float
+    pickup_kl: float
+    per_col_ce: Dict[str, float]
+    per_col_acc: Dict[str, float]
+
+
+def _grad_norm(model: TVAEAutoregressive) -> float:
+    total = 0.0
+    for param in model.parameters():
+        if param.grad is None:
+            continue
+        total += float(param.grad.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
+
+def _param_norm(model: TVAEAutoregressive) -> float:
+    total = 0.0
+    for param in model.parameters():
+        total += float(param.detach().pow(2).sum().item())
+    return float(math.sqrt(total))
+
+# Generate synthetic rows from the TVAE decoder.
+# For each latent draw:
+#   1) sample a latent vector z
+#   2) sample pickup_id
+#   3) sample dropoff_id conditioned on pickup_id
+#   4) sample day_of_week conditioned on pickup/dropoff
+#   5) sample hour_of_day conditioned on pickup/dropoff/day_of_week
+# Repeat for all requested samples.
+def _sample_synthetic(
+    model: TVAEAutoregressive,
+    transformer: CategoricalTransformer,
+    *,
+    n_samples: int,
+    temperature: float,
+    device: torch.device,
+    batch_size: int = 10000,
+) -> pd.DataFrame:
+    """Sample synthetic rows in batches to keep GPU memory bounded."""
+    model.eval()
+    all_samples: Dict[str, List[np.ndarray]] = {col: [] for col in transformer.columns}
+
+    with torch.no_grad():
+        for start in range(0, n_samples, batch_size):
+            end = min(start + batch_size, n_samples)
+            current_batch = end - start
+
+            z = torch.randn(current_batch, model.latent_dim, device=device)
+            samples = model.sample(z, temperature=temperature)
+
+            for col in transformer.columns:
+                all_samples[col].append(samples[col].cpu().numpy())
+
+            # Release temporary GPU tensors after each batch.
+            del z, samples
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    # Concatenate all generated batches.
+    data = {col: np.concatenate(all_samples[col]) for col in transformer.columns}
+    df_idx = pd.DataFrame(data)
+    df_decoded = transformer.decode_indices(df_idx)
+    df_decoded = df_decoded[config.OUTPUT_COLUMNS]
+    return df_decoded
+
+
+def _eval_sample_size(df: pd.DataFrame) -> int:
+    n_eval = int(np.ceil(len(df) * float(config.EVAL_SAMPLE_RATIO)))
+    n_eval = max(1, n_eval)
+    if config.MAX_EVAL_SAMPLES is not None:
+        n_eval = min(n_eval, int(config.MAX_EVAL_SAMPLES))
+    n_eval = min(n_eval, len(df))
+    return n_eval
+
+# Compute synthetic quality metrics (TVAE-specific plus helper summaries).
+# Marginal: per-column JSD and chi-square.
+# OD: od_jsd, od_coverage on pickup/dropoff pairs.
+# Temporal: time_jsd, time_coverage on day-hour combinations.
+# Joint: joint_jsd, mode_dropping on OD × day × hour.
+# Store unique counts and coverage for each split.
+def _save_value_counts(df: pd.DataFrame, col: str, path: Path) -> None:
+    counts = df[col].value_counts().sort_index()
+    out = counts.rename("count").reset_index().rename(columns={"index": col})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(path, index=False)
+
+# Persist per-split summary statistics.
+def _save_split_stats(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    hold_df: pd.DataFrame,
+    *,
+    output_dir: Path,
+) -> None:
+    def _summary(split_name: str, df: pd.DataFrame) -> Dict[str, float]:
+        stats: Dict[str, float] = {"rows": float(len(df))}
+        for col in config.OUTPUT_COLUMNS:
+            _save_value_counts(df, col, output_dir / f"counts_{split_name}_{col}.csv")
+            stats[f"unique_{col}"] = float(df[col].nunique())
+            if split_name == "train":
+                stats[f"coverage_{col}"] = 1.0
+            else:
+                train_unique = set(train_df[col].unique())
+                split_unique = set(df[col].unique())
+                denom = max(1, len(train_unique))
+                stats[f"coverage_{col}"] = float(len(train_unique & split_unique) / denom)
+
+        train_joint = set(joint_counts(train_df).index)
+        split_joint = set(joint_counts(df).index)
+        stats["joint_unique"] = float(len(split_joint))
+        if split_name == "train":
+            stats["joint_coverage"] = 1.0
+        else:
+            denom = max(1, len(train_joint))
+            stats["joint_coverage"] = float(len(train_joint & split_joint) / denom)
+        return stats
+
+    for name, df in (("train", train_df), ("val", val_df), ("hold", hold_df)):
+        stats = _summary(name, df)
+        save_metrics_json(stats, output_dir / f"split_stats_{name}.json")
+
+#Apply experiment-level config overrides (basic framework for future sweep tooling).
+def _apply_overrides(overrides: Dict[str, object]) -> Dict[str, object]:
+    backup: Dict[str, object] = {}
+    for key, val in overrides.items():
+        if not hasattr(config, key):
+            raise KeyError(f"Unknown config key in experiment override: {key}")
+        backup[key] = getattr(config, key)
+        setattr(config, key, val)
+    return backup
+
+
+def _restore_overrides(backup: Dict[str, object]) -> None:
+    for key, val in backup.items():
+        setattr(config, key, val)
+
+
+def _run_dirs(run_tag: str) -> Tuple[Path, Path, Path]:
+    output_dir = Path(config.SAVE_DATA_DIR) / run_tag
+    log_dir = Path(config.LOG_DIR) / run_tag
+    plot_dir = Path(config.PLOT_DIR) / run_tag
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir, log_dir, plot_dir
+
+
+def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
+    """Create per-run subdirectories for metrics JSONs and synthetic samples."""
+    metrics_dir = output_dir / "metrics"
+    data_dir = output_dir / "data"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return metrics_dir, data_dir
+
+# Orchestrate the full single-order training flow.
+# - prepare data tensors and model
+# - run epoch loop with early stopping
+# - restore best state and generate synthetic samples
+# - compute metrics and persist checkpoints/mappings/results
+def train_single_order(
+    order_key: str,
+    order: List[str],
+    *,
+    device: torch.device,
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    hold_df: pd.DataFrame,
+    transformer: CategoricalTransformer,
+    output_dir: Path,
+    log_dir: Path,
+    plot_dir: Path,
+) -> Dict[str, float | str]:
+    """Train TVAE and evaluate val/hold splits separately.
+
+    The validation split is used for early stopping/model selection, while the hold
+    split (when present) is reserved for final reporting. We keep outputs separated
+    to avoid mixing metrics from different splits.
+    """
+    set_seed(config.GLOBAL_SEED)
+
+    log_path = log_dir / f"train_{order_key}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with log_path.open("w", encoding="utf-8") as fh, contextlib.redirect_stdout(
+        Tee(sys.stdout, fh)
+    ), ExperimentLogger(output_dir, run_name=order_key, enable_tb=None) as logger:
+        print(f"[Train] order_key={order_key} order={order}")
+        print(
+            f"[Train] train_rows={len(train_df)} val_rows={len(val_df)} hold_rows={len(hold_df)}"
+        )
+        if config.EPOCHS <= 1:
+            print(
+                "[Warn] config.EPOCHS <= 1. This is intended for smoke tests; "
+                "use a higher value for real training runs."
+            )
+
+        metrics_dir, data_dir = _run_output_subdirs(output_dir)
+        model_key = f"tvae_{order_key}"
+
+        train_loader, val_loader, train_idx, val_idx = _prepare_dataloaders(
+            train_df, val_df, transformer
+        )
+        col_to_idx = {col: i for i, col in enumerate(transformer.columns)}
+        pair_kl_log_q = None
+        pickup_kl_log_q = None
+        if config.PAIR_KL_WEIGHT > 0.0:
+            pickup_size = transformer.cardinalities["pickup_id"]
+            dropoff_size = transformer.cardinalities["dropoff_id"]
+            pair_kl_log_q = _build_dropoff_conditional_log_q(
+                train_idx,
+                pickup_size=pickup_size,
+                dropoff_size=dropoff_size,
+                eps=config.PAIR_KL_EPS,
+            )
+            pair_kl_log_q = torch.from_numpy(pair_kl_log_q).float().to(device)
+        if config.PICKUP_KL_WEIGHT > 0.0:
+            pickup_size = transformer.cardinalities["pickup_id"]
+            pickup_kl_log_q = _build_pickup_log_q(
+                train_idx,
+                pickup_size=pickup_size,
+                eps=config.PICKUP_KL_EPS,
+            )
+            pickup_kl_log_q = torch.from_numpy(pickup_kl_log_q).float().to(device)
+
+        model = TVAEAutoregressive(
+            column_sizes=transformer.cardinalities,
+            order=order,
+            encoder_hidden_dims=config.ENCODER_HIDDEN_DIMS,
+            decoder_hidden_dims=config.DECODER_HIDDEN_DIMS,
+            latent_dim=config.LATENT_DIM,
+        ).to(device)
+
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY
+        )
+
+        best_val = float("inf")
+        best_state = None
+        epochs_no_improve = 0
+
+        loss_rows = []
+        train_start = time.monotonic()
+        monitor_every = int(getattr(config, "TVAE_MONITOR_METRICS_EVERY_EPOCHS", 0))
+        monitor_max = int(getattr(config, "TVAE_MONITOR_MAX_SAMPLES", 0))
+
+        for epoch in range(1, config.EPOCHS + 1):
+            beta = _kl_beta(epoch)
+            train_stats = _epoch_pass(
+                model,
+                train_loader,
+                col_to_idx,
+                order,
+                device,
+                beta,
+                pair_kl_log_q=pair_kl_log_q,
+                pair_kl_weight=config.PAIR_KL_WEIGHT,
+                pickup_kl_log_q=pickup_kl_log_q,
+                pickup_kl_weight=config.PICKUP_KL_WEIGHT,
+                train=True,
+                optimizer=optimizer,
+            )
+            grad_norm = _grad_norm(model)
+            param_norm = _param_norm(model)
+            val_stats = _epoch_pass(
+                model,
+                val_loader,
+                col_to_idx,
+                order,
+                device,
+                beta,
+                pair_kl_log_q=pair_kl_log_q,
+                pair_kl_weight=config.PAIR_KL_WEIGHT,
+                pickup_kl_log_q=pickup_kl_log_q,
+                pickup_kl_weight=config.PICKUP_KL_WEIGHT,
+                train=False,
+            )
+
+            logger.log_scalars(
+                {
+                    "loss": train_stats["loss"],
+                    "recon": train_stats["recon"],
+                    "kl": train_stats["kl"],
+                    "pair_kl": train_stats["pair_kl"],
+                    "pickup_kl": train_stats["pickup_kl"],
+                },
+                step=epoch,
+                prefix="train",
+            )
+            logger.log_scalars(
+                {
+                    "loss": val_stats["loss"],
+                    "recon": val_stats["recon"],
+                    "kl": val_stats["kl"],
+                    "pair_kl": val_stats["pair_kl"],
+                    "pickup_kl": val_stats["pickup_kl"],
+                },
+                step=epoch,
+                prefix="val",
+            )
+            logger.log_scalar("grad_norm", grad_norm, step=epoch, split="train")
+            logger.log_scalar("param_norm", param_norm, step=epoch, split="train")
+            # Per-head reconstruction and accuracy highlight bottlenecks per variable.
+            for col in order:
+                logger.log_scalar(
+                    f"ce_{col}",
+                    train_stats["per_col_ce"][col],
+                    step=epoch,
+                    split="train",
+                )
+                logger.log_scalar(
+                    f"acc_{col}",
+                    train_stats["per_col_acc"][col],
+                    step=epoch,
+                    split="train",
+                )
+                logger.log_scalar(
+                    f"ce_{col}",
+                    val_stats["per_col_ce"][col],
+                    step=epoch,
+                    split="val",
+                )
+                logger.log_scalar(
+                    f"acc_{col}",
+                    val_stats["per_col_acc"][col],
+                    step=epoch,
+                    split="val",
+                )
+
+            if monitor_every > 0 and epoch % monitor_every == 0 and len(val_df) > 0:
+                n_monitor = len(val_df)
+                if monitor_max > 0:
+                    n_monitor = min(n_monitor, monitor_max)
+                if n_monitor > 0:
+                    if n_monitor < len(val_df):
+                        val_subset = val_df.sample(
+                            n=n_monitor, random_state=config.GLOBAL_SEED
+                        ).reset_index(drop=True)
+                    else:
+                        val_subset = val_df
+                    synth_subset = _sample_synthetic(
+                        model,
+                        transformer,
+                        n_samples=n_monitor,
+                        temperature=config.SAMPLE_TEMPERATURE,
+                        device=device,
+                    )
+                    fast_metrics = compute_fast_metrics(val_subset, synth_subset)
+                    logger.log_scalars(fast_metrics, step=epoch, prefix="metrics")
+
+            loss_rows.append(
+                {
+                    "epoch": epoch,
+                    "beta": beta,
+                    "train_loss": train_stats["loss"],
+                    "train_ce": train_stats["recon"],
+                    "train_kl": train_stats["kl"],
+                    "train_pair_kl": train_stats["pair_kl"],
+                    "train_pickup_kl": train_stats["pickup_kl"],
+                    "val_loss": val_stats["loss"],
+                    "val_ce": val_stats["recon"],
+                    "val_kl": val_stats["kl"],
+                    "val_pair_kl": val_stats["pair_kl"],
+                    "val_pickup_kl": val_stats["pickup_kl"],
+                }
+            )
+            print(
+                f"[Epoch {epoch:03d}] beta={beta:.4f} train_loss={train_stats['loss']:.4f} "
+                f"val_loss={val_stats['loss']:.4f}"
+            )
+
+            if best_val - val_stats["loss"] > config.MIN_DELTA:
+                best_val = val_stats["loss"]
+                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= config.PATIENCE:
+                print("[Train] early stopping")
+                break
+        train_time_min = (time.monotonic() - train_start) / 60.0
+
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+        loss_df = pd.DataFrame(loss_rows)
+        loss_df.to_csv(output_dir / f"loss_{order_key}.csv", index=False)
+
+        save_mappings(output_dir / f"mappings_{order_key}.json", transformer)
+
+        meta = {
+            "column_sizes": transformer.cardinalities,
+            "order": order,
+            "encoder_hidden_dims": list(config.ENCODER_HIDDEN_DIMS),
+            "decoder_hidden_dims": list(config.DECODER_HIDDEN_DIMS),
+            "latent_dim": config.LATENT_DIM,
+            "columns": transformer.columns,
+        }
+        checkpoint_path = output_dir / f"tvae_{order_key}.pt"
+        save_checkpoint(
+            checkpoint_path,
+            model_state=model.state_dict(),
+            meta=meta,
+            optimizer_state=optimizer.state_dict(),
+            epoch=epoch,
+            metrics={"best_val": best_val},
+        )
+
+        def _evaluate_split(
+            split_name: str,
+            eval_df: pd.DataFrame,
+        ) -> Dict[str, float | str] | None:
+            """Sample synthetic data and compute metrics for a given split."""
+            if len(eval_df) == 0:
+                print(f"[Train] skip {split_name}: empty split")
+                return None
+
+            n_eval = _eval_sample_size(eval_df)
+            sample_start = time.monotonic()
+            synth_df = _sample_synthetic(
+                model,
+                transformer,
+                n_samples=n_eval,
+                temperature=config.SAMPLE_TEMPERATURE,
+                device=device,
+            )
+            sample_time_min = (time.monotonic() - sample_start) / 60.0
+
+            synth_path = data_dir / f"synthetic_{model_key}_{split_name}.csv"
+            synth_df.to_csv(synth_path, index=False)
+
+            metrics: Dict[str, float | str] = compute_metrics(
+                eval_df,
+                synth_df,
+                order_key=f"{model_key}_{split_name}",
+                output_dir=metrics_dir,
+                plot_dir=plot_dir,
+            )
+            paper_metrics = compute_paper_metrics(train_df, eval_df, synth_df)
+            metrics.update(paper_metrics)
+            metrics["eval_split"] = split_name
+            metrics["n_train"] = float(len(train_df))
+            metrics["n_eval"] = float(n_eval)
+            metrics["n_synth"] = float(len(synth_df))
+            metrics["best_val"] = float(best_val)
+            metrics["train_time_min"] = float(train_time_min)
+            metrics["sample_time_min"] = float(sample_time_min)
+            metrics["total_time_min"] = float(train_time_min + sample_time_min)
+
+            metrics_path = metrics_dir / f"metrics_{model_key}_{split_name}.json"
+            save_metrics_json(metrics, metrics_path)
+            print(f"[Train] metrics saved: {metrics_path}")
+            print(f"[Train] synthetic saved: {synth_path}")
+            return metrics
+
+        # Evaluate splits independently: val drives early stopping, hold is for final reporting.
+        metrics_by_split: Dict[str, Dict[str, float | str]] = {}
+        val_metrics = _evaluate_split("val", val_df)
+        if val_metrics is not None:
+            metrics_by_split["val"] = val_metrics
+
+        hold_metrics = _evaluate_split("hold", hold_df)
+        if hold_metrics is not None:
+            metrics_by_split["hold"] = hold_metrics
+
+        alias_metrics = None
+        if "hold" in metrics_by_split:
+            alias_metrics = metrics_by_split["hold"]
+        elif "val" in metrics_by_split:
+            alias_metrics = metrics_by_split["val"]
+
+        if alias_metrics is not None:
+            save_metrics_json(alias_metrics, output_dir / f"metrics_{order_key}.json")
+
+        print(f"[Train] saved checkpoint={checkpoint_path}")
+        if alias_metrics is not None:
+            print(f"[Train] metrics keys={sorted(alias_metrics.keys())}")
+
+    return alias_metrics or {}
+
+# Entry point orchestrating training experiments; currently the standard flow calls
+# train_single_order for the fixed order configured in config.
+def train_all_orders() -> None:
+    raw_train_df, raw_val_df, raw_hold_df = load_and_split()
+    experiments = config.EXPERIMENTS or {"baseline": {}}
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    for exp_name, overrides in experiments.items():
+        backup = _apply_overrides(overrides)
+        output_dir, log_dir, plot_dir = _run_dirs(exp_name)
+
+        _save_split_stats(raw_train_df, raw_val_df, raw_hold_df, output_dir=output_dir)
+        baseline_metrics = compute_metrics(
+            raw_train_df,
+            raw_val_df,
+            order_key="train_vs_val",
+            output_dir=output_dir,
+            plot_dir=plot_dir,
+        )
+        save_metrics_json(baseline_metrics, output_dir / "metrics_train_vs_val.json")
+
+        train_df = raw_train_df
+        val_df = raw_val_df
+        transformer = CategoricalTransformer(config.OUTPUT_COLUMNS)
+        transformer.fit(train_df)
+
+        val_df = _filter_known(val_df, transformer)
+        train_df = _filter_known(train_df, transformer)
+        hold_df = _filter_known(raw_hold_df, transformer)
+
+        order_key = config.FIXED_ORDER_KEY
+        order = config.ORDERS[order_key]
+        metrics = train_single_order(
+            order_key,
+            order,
+            device=device,
+            train_df=train_df,
+            val_df=val_df,
+            hold_df=hold_df,
+            transformer=transformer,
+            output_dir=output_dir,
+            log_dir=log_dir,
+            plot_dir=plot_dir,
+        )
+        print(f"[Train] completed order={order_key} metrics_keys={len(metrics)}")
+
+        _restore_overrides(backup)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.parse_args()
+    train_all_orders()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

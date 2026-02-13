@@ -1,0 +1,8 @@
+[THT-TripGen] run_tag=tht_tripgen_20260212_233512
+[THT-TripGen] dropping 80906 rows with negative total_amount
+[THT-TripGen] train_rows=3839929 val_rows=682599 hold_rows=1094596
+[Epoch 001] train_nll=13.0240 val_nll=12.4621
+[Epoch 002] train_nll=12.3762 val_nll=12.1925
+[Epoch 003] train_nll=12.1756 val_nll=12.0320
+[Epoch 004] train_nll=12.0541 val_nll=11.9516
+[Epoch 005] train_nll=11.9863 val_nll=11.9082

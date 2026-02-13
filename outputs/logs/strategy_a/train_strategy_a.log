@@ -1,0 +1,8 @@
+[Strategy A] run_tag=strategy_a
+[Strategy A] train_rows=4366407 val_rows=797134 hold_rows=1221670
+[Epoch 001] train_nll=10.8119 val_nll=10.7601
+[Epoch 002] train_nll=10.7412 val_nll=10.7462
+[Epoch 003] train_nll=10.7306 val_nll=10.7420
+[Epoch 004] train_nll=10.7246 val_nll=10.7371
+[Epoch 005] train_nll=10.7205 val_nll=10.7336
+[Epoch 006] train_nll=10.7172 val_nll=10.7344

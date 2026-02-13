@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tvae-synthetic-pipeline"
+version = "0.1.0"
+description = "Synthetic trip generation pipeline (THT-TripGen)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+geo = [
+  "geopandas",
+  "shapely",
+  "pyproj",
+]
+viz = [
+  "matplotlib",
+  "tensorboard",
+]
+torch = ["torch"]
+
+[project.scripts]
+tvae-run-full-pipeline = "tvae.tools.run_full_pipeline:main"
+tvae-convert-latlon = "tvae.tools.converter_lagitude_longitude:main"
+tvae-build-phys-edges = "tvae.tools.build_tht_phys_edges_csv:main"
+tvae-build-zone-embeddings = "tvae.tools.build_tht_zone_embeddings:main"
+tvae-viz-tht-phys = "tvae.tools.viz_tht_phys_graph:main"
+tvae-viz-tht-func = "tvae.tools.viz_tht_func_graph:main"
+tvae-inspect-tht-phys = "tvae.tools.inspect_tht_phys_graph:main"
+tvae-train-tht-tripgen = "tvae.train_tht_tripgen:main"
+tvae-sample-tht-tripgen = "tvae.sample_tht_tripgen:main"
+tvae-recalc-metrics = "tvae.recalc_metrics_tht_tripgen_hold:main"
+tvae-recalc-downstream = "tvae.recalc_downstream_tht_tripgen:main"
+tvae-analyze-exports = "tvae.tools.analyze_run_exports:main"
+tvae-export-metrics = "tvae.tools.export_run_metrics:main"
+tvae-export-training = "tvae.tools.export_training_info:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
