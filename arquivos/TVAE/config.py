@@ -17,9 +17,9 @@ FILTER_DOW_MAX = 5
 FILTER_START_DATE = None
 FILTER_END_DATE = None
 
-# Split fractions (70% treino, 15% validação, 15% hold)
-# Com TRAIN_FRAC + VAL_FRAC = 1.0, o hold_df fica vazio e val_df é usado como teste
-# O modelo usa val_df tanto para early stopping quanto para avaliação final
+# Split fractions (70% train, 15% val, 15% hold)
+# If TRAIN_FRAC + VAL_FRAC == 1.0, hold_df can be empty and val_df is used as final test.
+# The model uses val_df for early stopping and for final evaluation.
 TRAIN_FRAC = 0.70
 VAL_FRAC = 0.15
 
@@ -49,11 +49,11 @@ MIN_DELTA = 1e-4
 
 # Order for autoregressive decoder (fixed to order_1)
 ORDERS = {
-    "order_1": ["pickup_id", "dropoff_id", "dia_da_semana", "hora_do_dia"],
+    "order_1": ["pickup_id", "dropoff_id", "day_of_week", "hour_of_day"],
 }
 FIXED_ORDER_KEY = "order_1"
 
-OUTPUT_COLUMNS = ["hora_do_dia", "dia_da_semana", "pickup_id", "dropoff_id"]
+OUTPUT_COLUMNS = ["hour_of_day", "day_of_week", "pickup_id", "dropoff_id"]
 PASSENGER_COL = "passenger_count"
 FARE_COL = "total_amount"
 R_COL = "r"
@@ -63,16 +63,16 @@ THT_ATTRIBUTE_CONTINUOUS_COLUMNS = ["total_amount"]
 # Sampling
 SAMPLE_TEMPERATURE = 1.0
 SAMPLE_ROWS = 20000
-EVAL_SAMPLE_RATIO = 1.0  # 100% do teste para comparação equivalente
+EVAL_SAMPLE_RATIO = 1.0  # Use 100% of the evaluation split for metric computation.
 MAX_EVAL_SAMPLES = None
 TVAE_FLOW_DIAG_EVERY_EPOCHS = 0
 TVAE_MONITOR_METRICS_EVERY_EPOCHS = 5
 TVAE_MONITOR_MAX_SAMPLES = 5000
 
 # Paper metrics
-# TIME_KEY_CARDINALITY = 6 * 24 porque domingo (dia 6) está excluído pelo filtro FILTER_DOW_MAX=5
+# Time slots per week after excluding Sunday (day 6 is omitted by FILTER_DOW_MAX=5)
 TIME_KEY_CARDINALITY = 6 * 24
-TIME_PERIOD_DOW = 6  # Dias 0-5 (seg-sáb)
+TIME_PERIOD_DOW = 6  # Days 0-5 (Monday-Saturday)
 TIME_PERIOD_HOUR = 24
 COVERAGE_K = 5
 COVERAGE_MAX_SAMPLES = 100000
@@ -158,11 +158,11 @@ THT_TOTAL_AMOUNT_CLIP_PMIN = 0.001
 THT_TOTAL_AMOUNT_CLIP_PMAX = 0.999
 THT_TOTAL_AMOUNT_SIGMA_FLOOR = 1e-4
 THT_TRIPGEN_COLUMNS = [
-    "hora_do_dia",
+    "hour_of_day",
     "r",
     "pickup_id",
     "dropoff_id",
-    "dia_da_semana",
+    "day_of_week",
 ]
 if THT_USE_PASSENGER_COUNT and "passenger_count" not in THT_TRIPGEN_COLUMNS:
     THT_TRIPGEN_COLUMNS.append("passenger_count")
@@ -207,7 +207,7 @@ OUTPUT_BASE_DIR = Path("outputs")
 SAVE_DATA_SUBDIR = "ryc"
 SAVE_DATA_DIR = str(OUTPUT_BASE_DIR / "save_data" / SAVE_DATA_SUBDIR)
 LOG_DIR = str(OUTPUT_BASE_DIR / "logs")
-PLOT_DIR = str(OUTPUT_BASE_DIR / "graficos")
+PLOT_DIR = str(OUTPUT_BASE_DIR / "plots")
 THT_TOPOLOGY_CACHE_DIR = str(OUTPUT_BASE_DIR / "topology_cache")
 
 for _d in (SAVE_DATA_DIR, LOG_DIR, PLOT_DIR, THT_TOPOLOGY_CACHE_DIR):

@@ -17,8 +17,8 @@ def _modules():
 def _base_df(n: int, fare: float) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "hora_do_dia": [10] * n,
-            "dia_da_semana": [2] * n,
+            "hour_of_day": [10] * n,
+            "day_of_week": [2] * n,
             "pickup_id": [1] * n,
             "dropoff_id": [3] * n,
             "r": np.linspace(0.1, 0.2, n),

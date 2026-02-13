@@ -84,7 +84,7 @@ def main() -> int:
         "--run-dir",
         type=Path,
         default=Path(config.SAVE_DATA_DIR) / "tht_tripgen",
-        help="Diretorio do experimento (contendo checkpoint e mappings).",
+        help="Run directory containing the checkpoint and mappings.",
     )
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--mappings", type=Path, default=None)
@@ -98,13 +98,13 @@ def main() -> int:
         "--plot-dir",
         type=Path,
         default=None,
-        help="Diretorio para salvar graficos (default: <run-dir>/plots).",
+        help="Directory for saving figures (default: <run-dir>/plots).",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
-        help="Arquivo de metrics (default: <run-dir>/metrics_tht_tripgen_<split>.json).",
+        help="Metrics output JSON (default: <run-dir>/metrics_tht_tripgen_<split>.json).",
     )
     parser.add_argument("--force-sample", action="store_true")
     args = parser.parse_args()
@@ -133,7 +133,7 @@ def main() -> int:
     split_name, eval_df = _choose_split(val_df, hold_df, split=args.split)
 
     if len(eval_df) == 0:
-        raise RuntimeError("eval_df vazio; ajuste split ou filtros.")
+        raise RuntimeError("eval_df is empty; adjust split selection or filtering options.")
 
     if args.rows is None:
         ratio = float(getattr(config, "THT_EVAL_SAMPLE_RATIO", 1.0))

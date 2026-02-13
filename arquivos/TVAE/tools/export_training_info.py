@@ -21,7 +21,7 @@ from utils.serialization import (
 )
 
 
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "3.0.0"
 SectionRecord = dict[str, Any]
 
 CSV_FIELDS = [
@@ -42,9 +42,6 @@ CSV_FIELDS = [
 ]
 
 _FLOAT_RE = r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?"
-_TVAE_LOG_RE = re.compile(
-    rf"^\[Epoch\s+(?P<epoch>{_FLOAT_RE})\].*train_loss=(?P<train>{_FLOAT_RE}).*val_loss=(?P<val>{_FLOAT_RE})"
-)
 _THT_LOG_RE = re.compile(
     rf"^\[Epoch\s+(?P<epoch>{_FLOAT_RE})\].*train_nll=(?P<train>{_FLOAT_RE}).*val_nll=(?P<val>{_FLOAT_RE})"
 )
@@ -144,28 +141,6 @@ def _read_checkpoint(path: Path) -> tuple[dict[str, Any], str | None]:
     }, None
 
 
-def _read_tvae_mapping_summary(path: Path) -> tuple[dict[str, Any], str | None]:
-    payload = _read_json(path)
-    columns = payload.get("columns")
-    categories = payload.get("categories")
-    if columns is None or categories is None:
-        return {
-            "columns": list(columns) if isinstance(columns, list) else [],
-            "num_columns": len(columns) if isinstance(columns, list) else 0,
-            "category_cardinalities": {},
-        }, None
-    if not isinstance(categories, Mapping):
-        return {"columns": list(columns), "num_columns": len(columns), "category_cardinalities": {}}, None
-    return {
-        "columns": list(columns),
-        "num_columns": len(columns),
-        "category_cardinalities": {
-            str(k): len(v) if isinstance(v, list) else len(list(v))
-            for k, v in categories.items()
-        },
-    }, None
-
-
 def _read_tht_mapping_summary(path: Path) -> tuple[dict[str, Any], str | None]:
     payload = _read_json(path)
     zone_categories = payload.get("zone_categories", {})
@@ -251,9 +226,7 @@ def _read_scalars_summary(path: Path) -> tuple[dict[str, Any], str | None]:
 
 
 def _read_log_events(path: Path, model: str) -> tuple[dict[str, Any], str | None]:
-    if model == "tvae":
-        regex = _TVAE_LOG_RE
-    elif model == "tht":
+    if model == "tht":
         regex = _THT_LOG_RE
     else:
         return {"error": f"unsupported log model: {model}"}, "invalid-log-model"
@@ -342,150 +315,6 @@ def _add_artifact_section(
         "file_status": _file_status(path) if path is not None else {"exists": False, "path": str(path) if path is not None else None},
         "metrics": metrics,
     }
-
-
-def _build_tvae_sections(
-    run_dir: Path,
-    parse_logs: bool,
-    *,
-    strict: bool,
-    required: bool,
-) -> dict[str, SectionRecord]:
-    sections: dict[str, SectionRecord] = {}
-    order_key = config.FIXED_ORDER_KEY
-    checkpoint_candidates = [Path(f"tvae_{order_key}.pt"), Path("tvae.pt")]
-    mappings_candidates = [Path(f"mappings_{order_key}.json"), Path("mappings.json")]
-    loss_candidates = [Path(f"loss_{order_key}.csv"), Path("loss.csv")]
-    scalars_path = _resolve_file(run_dir, [Path("logs") / "scalars.csv"])
-    log_path = _resolve_log_path(run_dir, f"train_{order_key}.log")
-
-    checkpoint_path = _resolve_file(run_dir, checkpoint_candidates)
-    mappings_path = _resolve_file(run_dir, mappings_candidates)
-    loss_path = _resolve_file(run_dir, loss_candidates)
-
-    has_any_artifact = any(
-        p is not None for p in (checkpoint_path, mappings_path, loss_path)
-    )
-    if not has_any_artifact and not required:
-        return {}
-
-    sections["run"] = {
-        "status": "ok",
-        "source_file": str(run_dir),
-        "artifact_name": "run",
-        "section_type": "run",
-        "file_status": _file_status(run_dir),
-        "metrics": {
-            "run_dir": str(run_dir),
-            "run_name": run_dir.name,
-            "model_type": "tvae",
-            "order_key": order_key,
-            "config": _snapshot_config(
-                [
-                    "BATCH_SIZE",
-                    "EPOCHS",
-                    "LEARNING_RATE",
-                    "WEIGHT_DECAY",
-                    "PATIENCE",
-                    "MIN_DELTA",
-                    "KL_BETA_START",
-                    "KL_BETA_END",
-                    "KL_ANNEAL_EPOCHS",
-                    "PAIR_KL_WEIGHT",
-                    "PICKUP_KL_WEIGHT",
-                    "ENCODER_HIDDEN_DIMS",
-                    "DECODER_HIDDEN_DIMS",
-                    "LATENT_DIM",
-                ]
-            ),
-        },
-    }
-
-    sections["checkpoint"] = _add_artifact_section(
-        "checkpoint",
-        checkpoint_path,
-        _read_checkpoint,
-        required_file=True,
-        strict=strict,
-        required=required,
-        section_type="checkpoint",
-    )
-    sections["mappings"] = _add_artifact_section(
-        "mappings",
-        mappings_path,
-        _read_tvae_mapping_summary,
-        required_file=True,
-        strict=strict,
-        required=required,
-        section_type="mappings",
-    )
-    sections["loss"] = _add_artifact_section(
-        "loss",
-        loss_path,
-        _read_csv_summary,
-        required_file=False,
-        strict=strict,
-        required=required,
-        section_type="loss",
-    )
-    sections["scalars"] = _add_artifact_section(
-        "scalars",
-        scalars_path,
-        _read_scalars_summary,
-        required_file=False,
-        strict=strict,
-        required=required,
-        section_type="scalars",
-    )
-
-    if log_path is not None:
-        log_metrics, log_err = (_read_log_events(log_path, "tvae") if parse_logs else ({}, None))
-        if log_err is not None:
-            sections["log"] = {
-                "status": "invalid",
-                "source_file": str(log_path),
-                "artifact_name": "log",
-                "section_type": "log",
-                "file_status": _file_status(log_path),
-                "metrics": {"error": log_err},
-            }
-        else:
-            log_metrics["file_status"] = _file_status(log_path)
-            sections["log"] = {
-                "status": "ok",
-                "source_file": str(log_path),
-                "artifact_name": "log",
-                "section_type": "log",
-                "file_status": _file_status(log_path),
-                "metrics": log_metrics,
-            }
-    elif strict and required:
-        raise FileNotFoundError(f"missing required TVAE log for {run_dir}")
-    else:
-        sections["log"] = {
-            "status": "missing",
-            "source_file": None,
-            "artifact_name": "log",
-            "section_type": "log",
-            "file_status": {"exists": False, "path": None},
-            "metrics": {},
-        }
-
-    sections["artifacts"] = {
-        "status": "ok",
-        "source_file": None,
-        "artifact_name": "artifacts",
-        "section_type": "artifacts",
-        "file_status": {"exists": True, "path": str(run_dir)},
-        "metrics": {
-            "run_dir": str(run_dir),
-            "artifacts": [
-                _status_record(path)
-                for path in [checkpoint_path, mappings_path, loss_path, scalars_path, log_path]
-            ],
-        },
-    }
-    return sections
 
 
 def _build_tht_sections(
@@ -645,30 +474,11 @@ def _prefix_sections(prefix: str, sections: Mapping[str, SectionRecord]) -> dict
 
 def collect_training_sections(
     strategy_run_dir: Path,
-    baseline_run_dir: Path | None = None,
     *,
     parse_logs: bool = True,
     strict: bool = False,
 ) -> dict[str, SectionRecord]:
     sections: dict[str, SectionRecord] = {}
-
-    if baseline_run_dir is not None:
-        sections.update(
-            _prefix_sections(
-                "baseline_tvae",
-                _build_tvae_sections(baseline_run_dir, parse_logs, strict=strict, required=True),
-            )
-        )
-
-    strategy_tvae_sections = _build_tvae_sections(
-        strategy_run_dir,
-        parse_logs,
-        strict=strict,
-        required=False,
-    )
-    if strategy_tvae_sections:
-        sections.update(_prefix_sections("strategy_tvae", strategy_tvae_sections))
-
     sections.update(
         _prefix_sections(
             "strategy_tht",
@@ -975,7 +785,6 @@ def _build_summary(
 
 def build_training_export_bundle(
     strategy_run_dir: Path,
-    baseline_run_dir: Path | None = None,
     *,
     parse_logs: bool = True,
     strict: bool = False,
@@ -983,7 +792,6 @@ def build_training_export_bundle(
 ) -> dict[str, Any]:
     sections = collect_training_sections(
         strategy_run_dir=strategy_run_dir,
-        baseline_run_dir=baseline_run_dir,
         parse_logs=parse_logs,
         strict=strict,
     )
@@ -992,7 +800,6 @@ def build_training_export_bundle(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "pipeline_context": {
             "strategy_run_dir": str(strategy_run_dir),
-            "baseline_run_dir": str(baseline_run_dir) if baseline_run_dir else None,
             "run_label": run_label,
             "strict": strict,
             "parse_logs": parse_logs,
@@ -1040,7 +847,6 @@ def _write_csv(bundle: Mapping[str, Any], path: Path) -> None:
 
 def export_training_info(
     strategy_run_dir: Path,
-    baseline_run_dir: Path | None = None,
     *,
     output_json: Path | None = None,
     output_csv: Path | None = None,
@@ -1050,7 +856,6 @@ def export_training_info(
 ) -> dict[str, Any]:
     bundle = build_training_export_bundle(
         strategy_run_dir=strategy_run_dir,
-        baseline_run_dir=baseline_run_dir,
         strict=strict,
         parse_logs=parse_logs,
         run_label=run_label,
@@ -1093,19 +898,13 @@ def _resolve_export_path(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Consolidate TVAE and THT-TripGen training artifacts into one JSON + CSV."
+        description="Consolidate THT-TripGen training artifacts into one JSON + CSV."
     )
     parser.add_argument(
         "--strategy-run-dir",
         required=True,
         type=Path,
         help="Path to strategy THT-TripGen run directory.",
-    )
-    parser.add_argument(
-        "--baseline-run-dir",
-        type=Path,
-        default=None,
-        help="Optional baseline TVAE run directory for comparison context.",
     )
     parser.add_argument(
         "--training-export-dir",
@@ -1134,7 +933,6 @@ def main() -> int:
     output_json, output_csv = _resolve_export_path(args=args, run_dir=strategy_run_dir)
     export_training_info(
         strategy_run_dir=strategy_run_dir,
-        baseline_run_dir=args.baseline_run_dir,
         output_json=output_json if args.export_json is not False else None,
         output_csv=output_csv if args.export_csv is not False else None,
         strict=args.strict,

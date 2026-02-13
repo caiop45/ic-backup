@@ -9,8 +9,8 @@ from utils.metrics import dcr_within_quantile
 def test_dcr_within_quantile_simple():
     df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 0],
-            "hora_do_dia": [0, 1],
+            "day_of_week": [0, 0],
+            "hour_of_day": [0, 1],
             "pickup_id": [1, 1],
             "dropoff_id": [2, 2],
         }

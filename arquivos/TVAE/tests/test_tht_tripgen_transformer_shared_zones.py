@@ -6,11 +6,11 @@ from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 def test_tht_tripgen_shared_zone_vocab_union():
     train_df = pd.DataFrame(
         {
-            "hora_do_dia": [0, 1, 2],
+            "hour_of_day": [0, 1, 2],
             "r": [0.1, 0.2, 0.3],
             "pickup_id": [1, 2, 2],
             "dropoff_id": [2, 3, 3],
-            "dia_da_semana": [0, 1, 2],
+            "day_of_week": [0, 1, 2],
             "passenger_count": [1, 2, 1],
             "total_amount": [8.0, 9.0, 10.0],
         }

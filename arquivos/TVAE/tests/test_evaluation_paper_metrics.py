@@ -11,24 +11,24 @@ from utils.evaluation import compute_paper_metrics
 def test_compute_paper_metrics_keys_and_types():
     train_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2],
-            "hora_do_dia": [0, 1, 2],
+            "day_of_week": [0, 1, 2],
+            "hour_of_day": [0, 1, 2],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [2, 3, 1],
         }
     )
     eval_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2],
-            "hora_do_dia": [1, 2, 3],
+            "day_of_week": [0, 1, 2],
+            "hour_of_day": [1, 2, 3],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [3, 1, 2],
         }
     )
     synth_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2],
-            "hora_do_dia": [2, 3, 4],
+            "day_of_week": [0, 1, 2],
+            "hour_of_day": [2, 3, 4],
             "pickup_id": [1, 3, 2],
             "dropoff_id": [2, 1, 3],
         }
@@ -63,24 +63,24 @@ def test_compute_paper_metrics_keys_and_types():
 def test_compute_paper_metrics_within_dcr_keys():
     train_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2],
-            "hora_do_dia": [0, 1, 2],
+            "day_of_week": [0, 1, 2],
+            "hour_of_day": [0, 1, 2],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [2, 3, 1],
         }
     )
     eval_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2],
-            "hora_do_dia": [1, 2, 3],
+            "day_of_week": [0, 1, 2],
+            "hour_of_day": [1, 2, 3],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [3, 1, 2],
         }
     )
     synth_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2],
-            "hora_do_dia": [2, 3, 4],
+            "day_of_week": [0, 1, 2],
+            "hour_of_day": [2, 3, 4],
             "pickup_id": [1, 3, 2],
             "dropoff_id": [2, 1, 3],
         }

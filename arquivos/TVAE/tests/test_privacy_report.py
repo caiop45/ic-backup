@@ -9,8 +9,8 @@ from utils.privacy import exact_match_rate, exact_match_rate_with_r
 def test_exact_match_rate_basic():
     train_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1],
-            "hora_do_dia": [5, 6],
+            "day_of_week": [0, 1],
+            "hour_of_day": [5, 6],
             "pickup_id": [10, 11],
             "dropoff_id": [20, 21],
         }
@@ -18,14 +18,14 @@ def test_exact_match_rate_basic():
     synth_same = train_df.copy()
     synth_diff = pd.DataFrame(
         {
-            "dia_da_semana": [2, 3],
-            "hora_do_dia": [7, 8],
+            "day_of_week": [2, 3],
+            "hour_of_day": [7, 8],
             "pickup_id": [12, 13],
             "dropoff_id": [22, 23],
         }
     )
 
-    cols = ["dia_da_semana", "hora_do_dia", "pickup_id", "dropoff_id"]
+    cols = ["day_of_week", "hour_of_day", "pickup_id", "dropoff_id"]
     assert exact_match_rate(train_df, synth_same, cols) == 1.0
     assert exact_match_rate(train_df, synth_diff, cols) == 0.0
 
@@ -33,8 +33,8 @@ def test_exact_match_rate_basic():
 def test_exact_match_rate_with_r_rounding():
     train_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1],
-            "hora_do_dia": [5, 6],
+            "day_of_week": [0, 1],
+            "hour_of_day": [5, 6],
             "pickup_id": [10, 11],
             "dropoff_id": [20, 21],
             "r": [0.1234, 0.5678],
@@ -42,15 +42,15 @@ def test_exact_match_rate_with_r_rounding():
     )
     synth_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1],
-            "hora_do_dia": [5, 6],
+            "day_of_week": [0, 1],
+            "hour_of_day": [5, 6],
             "pickup_id": [10, 11],
             "dropoff_id": [20, 21],
             "r": [0.1249, 0.5601],
         }
     )
 
-    cols = ["dia_da_semana", "hora_do_dia", "pickup_id", "dropoff_id"]
+    cols = ["day_of_week", "hour_of_day", "pickup_id", "dropoff_id"]
     rate_2 = exact_match_rate_with_r(
         train_df, synth_df, cols, r_col="r", decimals=2
     )
@@ -72,11 +72,11 @@ def test_sample_tht_tripgen_privacy_report(tmp_path, monkeypatch):
 
     df = pd.DataFrame(
         {
-            "hora_do_dia": [0, 1, 2, 3],
+            "hour_of_day": [0, 1, 2, 3],
             "r": [0.1, 0.2, 0.3, 0.4],
             "pickup_id": [1, 2, 3, 4],
             "dropoff_id": [2, 3, 4, 1],
-            "dia_da_semana": [0, 1, 2, 3],
+            "day_of_week": [0, 1, 2, 3],
             "passenger_count": [1, 2, 1, 3],
             "total_amount": [10.0, 20.0, 30.0, 40.0],
         }

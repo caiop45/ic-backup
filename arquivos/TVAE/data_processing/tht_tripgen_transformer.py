@@ -1,7 +1,7 @@
 """THT-TripGen transformer with shared zone vocabulary.
 
 Schema (THT-TripGen input):
-    - categorical: hora_do_dia, pickup_id, dropoff_id, dia_da_semana
+    - categorical: hour_of_day, pickup_id, dropoff_id, day_of_week
       optional: is_weekend, month, passenger_count
     - continuous: r in [0, 1)
       optional: total_amount (log1p + standardize)
@@ -22,10 +22,10 @@ import pandas as pd
 
 import config
 
-TIME_COL = "hora_do_dia"
+TIME_COL = "hour_of_day"
 PICKUP_COL = "pickup_id"
 DROPOFF_COL = "dropoff_id"
-DOW_COL = "dia_da_semana"
+DOW_COL = "day_of_week"
 R_COL = "r"
 PASSENGER_COL = "passenger_count"
 PASSENGER_IDX_COL = "passenger_idx"

@@ -41,7 +41,7 @@ def main() -> int:
         "--run-dir",
         type=Path,
         default=Path(config.SAVE_DATA_DIR) / "tht_tripgen",
-        help="Diretorio do experimento (contendo sintéticos).",
+        help="Run directory containing synthetic datasets.",
     )
     parser.add_argument("--split", type=str, choices=["val", "hold"], default=None)
     parser.add_argument("--seed", type=int, default=None)
@@ -52,7 +52,7 @@ def main() -> int:
         "--output",
         type=Path,
         default=None,
-        help="Arquivo de saida (default: <run-dir>/metrics/downstream_tht_tripgen_<split>.json).",
+        help="Output file (default: <run-dir>/metrics/downstream_tht_tripgen_<split>.json).",
     )
     args = parser.parse_args()
 

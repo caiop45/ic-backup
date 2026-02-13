@@ -406,7 +406,7 @@ def main() -> None:
     hours = _parse_hours(args.hour, args.hours, args.hour_range, max_h=max_h)
     if hours is not None:
         before = len(train_df)
-        train_df = train_df[train_df["hora_do_dia"].isin(hours)].reset_index(drop=True)
+        train_df = train_df[train_df["hour_of_day"].isin(hours)].reset_index(drop=True)
         print(f"[INFO] time filter hours={hours} rows={len(train_df)} (from {before})")
 
     if transformer is None:

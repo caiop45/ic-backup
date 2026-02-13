@@ -50,14 +50,14 @@ def load_raw_data() -> pd.DataFrame:
 
     df = _apply_time_filters(df)
     df = df.copy()
-    df["hora_do_dia"] = df[DATETIME_COL].dt.hour.astype("int64")
-    df["dia_da_semana"] = df[DATETIME_COL].dt.dayofweek.astype("int64")
+    df["hour_of_day"] = df[DATETIME_COL].dt.hour.astype("int64")
+    df["day_of_week"] = df[DATETIME_COL].dt.dayofweek.astype("int64")
     df["pickup_id"] = df[PICKUP_ID_COL].astype("int64")
     df["dropoff_id"] = df[DROPOFF_ID_COL].astype("int64")
 
-    keep_cols = [DATETIME_COL, "hora_do_dia", "dia_da_semana", "pickup_id", "dropoff_id"]
+    keep_cols = [DATETIME_COL, "hour_of_day", "day_of_week", "pickup_id", "dropoff_id"]
     df = df[keep_cols]
-    df = df.dropna(subset=["hora_do_dia", "dia_da_semana", "pickup_id", "dropoff_id"])
+    df = df.dropna(subset=["hour_of_day", "day_of_week", "pickup_id", "dropoff_id"])
 
     return df
 

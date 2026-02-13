@@ -1,10 +1,10 @@
-# Synthetic Trip Generation Pipeline (TVAE + THT-TripGen)
+# Synthetic Trip Generation Pipeline (THT-TripGen)
 
 ## Quickstart: Fresh Install to Results
 
 Here is a fresh-install, end-to-end pipeline that takes you from raw taxi data to
-experimental comparison outputs (baseline TVAE + THT-TripGen). It is the minimal
-sequence that works on a clean machine.
+THT-TripGen results and analysis exports. It is the minimal sequence that
+works on a clean machine.
 
 0) One-time setup (venv + deps)
 
@@ -50,7 +50,7 @@ PYTHONPATH=. python tools/build_tht_phys_edges_csv.py \
   --fix-geoms make_valid_if_available
 ```
 
-3) Run the full experiment pipeline (baseline + THT-TripGen + metrics + comparison)
+3) Run the full experiment pipeline (THT-TripGen + exports + analysis)
 
 ```bash
 python tools/run_full_pipeline.py --build-embeddings --device cuda
@@ -59,14 +59,12 @@ python tools/run_full_pipeline.py --build-embeddings --device cuda
 That command will:
 
 - build Node2Vec embeddings (Efunc/Ephys/Ecomb)
-- train baseline TVAE
 - train THT-TripGen
-- recalc metrics on hold split
-- generate comparison tables + plots
+- recalc metrics on hold split and hold-vs-val split
+- generate consolidated exports and analysis artifacts
 
-Project for training, sampling, and evaluation of synthetic transportation data. There are two main models:
+Project for training, sampling, and evaluation of synthetic transportation data.
 
-- **Autoregressive TVAE**: models `pickup_id`, `dropoff_id`, `dia_da_semana`, `hora_do_dia`.
 - **THT-TripGen**: models time -> origin -> destination, with zone embeddings (functional + physical).
 
 The focus is to compare synthetic vs real data across marginal, spatial (OD), and spatiotemporal distributions, plus paper metrics (temporal W1, graph similarity, coverage, DCR).
@@ -74,10 +72,10 @@ The focus is to compare synthetic vs real data across marginal, spatial (OD), an
 ## Pipeline (high-level)
 
 1) **Data reading and filtering** (config + loaders): apply time filters and derive columns.
-2) **Splits** (train/val/hold) with weekly strategy (TVAE) and S1/S2 (THT-TripGen).
+2) **Splits** (train/val/hold) with S1/S2 strategy (THT-TripGen).
 3) **Graphs**: physical adjacency and functional (OD top-k) + **Node2Vec**.
 4) **Visualization**: physical adjacency maps and directed functional graphs.
-5) **Models and training**: TVAE and THT-TripGen.
+5) **Models and training**: THT-TripGen.
 6) **Sampling / inference**: generate synthetic CSVs.
 7) **Analysis and metrics**: marginal, OD, temporal, joint, and paper metrics.
 8) **Experiments and comparisons**: multi-run comparisons and summary tables.
@@ -86,12 +84,12 @@ The focus is to compare synthetic vs real data across marginal, spatial (OD), an
 
 - `config.py`: central configuration (paths, filters, splits, hyperparameters).
 - `data_processing/`: loaders and transformers.
-- `models/`: TVAE and THT-TripGen definitions.
+- `models/`: THT-TripGen definitions.
 - `topology/`: graphs, node2vec, and visualization.
 - `tools/`: utilities (graphs, embeddings, visualization, pipeline).
-- `train_tvae.py`, `train_tht_tripgen.py`: training.
-- `sample_tvae.py`, `sample_tht_tripgen.py`: sampling.
-- `recalc_metrics_hold.py`, `recalc_metrics_tht_tripgen_hold.py`, `analyze_spatial.py`: evaluation.
+- `train_tht_tripgen.py`: training.
+- `sample_tht_tripgen.py`: sampling.
+- `recalc_metrics_tht_tripgen_hold.py`, `analyze_spatial.py`: evaluation.
 - `compare_runs.py`, `tools/compare_models.py`, `tools/run_full_pipeline.py`: experiments.
 
 ## Detailed stages
@@ -99,7 +97,6 @@ The focus is to compare synthetic vs real data across marginal, spatial (OD), an
 ### 1) Data and processing
 
 **Key scripts**
-- `data_processing/loader.py` (TVAE): read + filters + weekly split.
 - `data_processing/tht_tripgen_loader.py`: read + filters + S1/S2 split + time bins.
 
 **Important config (config.py)**
@@ -111,11 +108,7 @@ The focus is to compare synthetic vs real data across marginal, spatial (OD), an
 
 ```bash
 python - <<'PY'
-from data_processing.loader import load_and_split
 from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
-
-tr, va, ho = load_and_split()
-print('[TVAE] train/val/hold:', len(tr), len(va), len(ho))
 
 tr, va, ho = load_and_split_tht_tripgen(split='S1')
 print('[THT-TripGen S1] train/val/hold:', len(tr), len(va), len(ho))
@@ -207,21 +200,11 @@ python tools/viz_tht_func_graph.py \
 ```
 
 Notes:
-- `hora_do_dia` uses bins `0..THT_TIME_BINS_H-1` (default 24).
+- `hour_of_day` uses bins `0..THT_TIME_BINS_H-1` (default 24).
 - `--hour`, `--hours`, and `--hour-range` allow time slices.
 - `--min-weight` and `--max-edges` control graph density.
 
 ### 4) Model training
-
-**TVAE (autoregressive)**
-- Script: `train_tvae.py` (no CLI; uses `config.py`).
-- Outputs: `SAVE_DATA_DIR/<run>/` with checkpoint, mappings, metrics.
-
-**Suggested command**
-
-```bash
-python train_tvae.py
-```
 
 **THT-TripGen**
 - Script: `train_tht_tripgen.py`.
@@ -235,18 +218,6 @@ python train_tht_tripgen.py --run-tag tht_tripgen --device cuda
 ```
 
 ### 5) Sampling / inference
-
-**TVAE**
-- Script: `sample_tvae.py`.
-- Flags: `--checkpoint`, `--mappings`, `--rows`, `--temperature`, `--batch-size`.
-
-```bash
-python sample_tvae.py \
-  --checkpoint outputs/save_data/baseline/tvae_order_1.pt \
-  --mappings outputs/save_data/baseline/mappings_order_1.json \
-  --rows 100000 \
-  --temperature 1.0
-```
 
 **THT-TripGen**
 - Script: `sample_tht_tripgen.py`.
@@ -262,32 +233,17 @@ python sample_tht_tripgen.py \
 ### 6) Analysis and metrics
 
 **Key scripts**
-- `recalc_metrics_hold.py`: recompute TVAE metrics on hold.
 - `recalc_metrics_tht_tripgen_hold.py`: recompute THT-TripGen metrics.
-- `analyze_spatial.py`: deep spatial analysis (OD, degrees, conditionals).
+- `analyze_spatial.py`: legacy TVAE spatial helper. THT-TripGen scripts already write route/pattern metrics in
+  `metrics` and `privacy` JSON outputs.
 - `tools/export_run_metrics.py`: exports all available run metrics into one JSON/CSV bundle.
 
 **Suggested commands**
 
 ```bash
-python recalc_metrics_hold.py \
-  --run-dir outputs/save_data/baseline \
-  --order-key order_1 \
-  --no-plots
-```
-
-```bash
 python recalc_metrics_tht_tripgen_hold.py \
   --run-dir outputs/save_data/tht_tripgen \
   --no-plots
-```
-
-```bash
-python analyze_spatial.py \
-  --mappings outputs/save_data/baseline/mappings_order_1.json \
-  --checkpoint outputs/save_data/baseline/tvae_order_1.pt \
-  --split val \
-  --output-dir outputs/spatial
 ```
 
 **Key metrics**
@@ -304,13 +260,13 @@ For each run, use one consolidated summary file bundle:
 
 Where to find the summary in `metrics_export.json`:
 
-- `schema_version`: current export schema version (`2.0.0`)
+- `schema_version`: current export schema version (`3.0.0`)
 - `pipeline_context`: run directories and optional labels used during export
 - `summary`: compact counts and section discovery status
   - `n_sections`, `n_loaded`, `n_missing`
   - `loaded_sections`, `missing_sections`
-  - `n_topk_tables`, `n_topk_rows`
-- `sections`: per-section payloads for each metric file (`baseline_*`, `strategy_*`)
+- `n_topk_tables`, `n_topk_rows`
+- `sections`: per-section payloads for each metric file (`strategy_*`)
 - `tables.topk`: metadata entries for each discovered top-k table CSV
 
 ```bash
@@ -318,16 +274,6 @@ python tools/export_run_metrics.py \
   --strategy-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
   --output-json /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_export.json \
   --output-csv /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/metrics/metrics_export.csv
-```
-
-You can also run with baseline context:
-
-```bash
-python tools/export_run_metrics.py \
-  --strategy-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
-  --baseline-run-dir /path/to/outputs/save_data/baseline \
-  --output-json /tmp/metric_bundle.json \
-  --output-csv /tmp/metric_bundle.csv
 ```
 
 `run_full_pipeline.py` writes metrics summaries by default (`--no-export-metrics` to disable):
@@ -356,19 +302,18 @@ For provenance and training-trace analysis (checkpoints, mappings, losses, scala
 
 Where to find the summary in `training_export.json`:
 
-- `schema_version`: current export schema version (`2.0.0`)
+- `schema_version`: current export schema version (`3.0.0`)
 - `pipeline_context`: run directories and optional labels used during export
 - `summary`: compact counts and coverage for artifact availability
   - `n_sections`, `n_loaded`, `n_missing`
   - `n_loss_rows`, `n_scalar_points`, `n_log_events`
   - `loaded_sections`, `missing_sections`
 - `time_series`: compact series metadata (`loss`, `scalars`, `log`) for each section
-- `sections`: per-section payloads for baseline and strategy training artifacts
+- `sections`: per-section payloads for strategy training artifacts
 
 ```bash
 python tools/export_training_info.py \
   --strategy-run-dir /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749 \
-  --baseline-run-dir /path/to/outputs/save_data/baseline \
   --training-export-json /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/training/training_export.json \
   --training-export-csv /path/to/outputs/save_data/ryc/tht_tripgen_20260212_234749/training/training_export.csv
 ```
@@ -414,6 +359,10 @@ python tools/run_full_pipeline.py \
 Relevant `analysis_report.json` sections:
 
 - `metric_comparisons`: one row per structural metric per direction (`synth→val`, `synth→hold`, `hold→val`) plus derived deltas.
+- `metric_comparisons` now also includes first-class synthetic-vs-real comparison rows for attribute metrics:
+  - passenger metrics (`{PASSENGER_COL}_jsd`, `{PASSENGER_COL}_chi2`)
+  - fare metrics (`{FARE_COL}_log1p_w1`, `_log1p_ks`, `_log1p_quantile_mae`, `_log1p_median_mae_by_*`)
+  - residual/extended privacy metric row (`exact_match_rate_with_r_rounded`)
 - `training_summary`: copied from `training_export.json["summary"]`.
 - `summary.generated_rows`: counts of generated rows in CSV outputs.
 - `generated_files`: absolute/relative paths for artifacts, useful for automation.
@@ -421,33 +370,8 @@ Relevant `analysis_report.json` sections:
 ### 7) Experiments and comparisons
 
 **Key scripts**
-- `tools/run_full_pipeline.py`: run baseline + THT-TripGen + metrics.
-- `tools/compare_models.py`: compare baseline vs THT-TripGen.
-- `compare_runs.py`: multi-run comparison (adjust the `runs` dict).
-
-**Full pipeline (dataset → graphs → embeddings → train → eval → comparison)**
-
-This is the recommended **fresh-install** entrypoint (after you have created
-the physical edges CSV in stage 2). It:
-1) Reads the taxi dataset via `load_and_split` / `load_and_split_tht_tripgen`.
-2) Builds Node2Vec embeddings (Efunc/Ephys/Ecomb) if missing.
-3) Trains baseline TVAE + THT-TripGen.
-4) Recomputes metrics and writes comparison tables/plots.
-
-**Suggested command (default: builds embeddings, runs baseline + THT-TripGen)**:
-
-```bash
-python tools/run_full_pipeline.py --build-embeddings --device cuda
-```
-
-Notes:
-- `--build-embeddings` is optional; the pipeline builds embeddings by default unless `--skip-embeddings` is set.
-
-**THT-TripGen only (skip baseline + comparison)**
-
-```bash
-python tools/run_full_pipeline.py --tht-only --build-embeddings --device cuda
-```
+- `tools/run_full_pipeline.py`: run full THT-TripGen pipeline and emit exported artifacts.
+- `tools/compare_models.py` and `compare_runs.py`: optional manual comparison scripts for multi-run scoreboards.
 
 **Skip embeddings build/check (assumes Efunc/Ecomb exist)**
 
@@ -459,23 +383,11 @@ python tools/run_full_pipeline.py --skip-embeddings --device cuda
 
 ```bash
 python tools/run_full_pipeline.py \
-  --tht-only \
-  --skip-baseline \
-  --skip-comparison \
   --skip-embeddings \
   --skip-plots \
   --force-train \
   --force-sample \
   --device cuda
-```
-
-**Suggested command (compare two runs)**
-
-```bash
-python tools/compare_models.py \
-  --baseline-run outputs/save_data/baseline \
-  --tht-tripgen-run outputs/save_data/tht_tripgen \
-  --out-dir outputs/comparison
 ```
 
 ## Quick notes

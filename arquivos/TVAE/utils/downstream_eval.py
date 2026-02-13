@@ -46,8 +46,8 @@ except Exception:  # pragma: no cover - import fallback
 
 
 BASE_FEATURE_COLS: tuple[str, ...] = (
-    "hora_do_dia",
-    "dia_da_semana",
+    "hour_of_day",
+    "day_of_week",
     "pickup_id",
     "dropoff_id",
 )

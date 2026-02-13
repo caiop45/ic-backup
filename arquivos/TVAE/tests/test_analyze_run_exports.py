@@ -172,7 +172,72 @@ def test_analyze_run_exports_generates_outputs(tmp_path: Path) -> None:
     assert (output_dir / "analysis_training_long.csv").exists()
     assert (output_dir / "analysis_tooltips.csv").exists()
     assert report["schema_version"] == analyze_run_exports.ANALYSIS_SCHEMA_VERSION
-    assert len(report["metric_comparisons"]) == 14
-    assert report["summary"]["generated_rows"]["metrics_long"] == 42
+    assert len(report["metric_comparisons"]) == 23
+    assert report["summary"]["generated_rows"]["metrics_long"] == 69
     assert report["summary"]["generated_rows"]["tooltips"] > 10
     assert int(report["summary"]["generated_rows"]["training_long"]) > 0
+
+
+def test_analyze_run_exports_includes_passenger_fare_and_r_metrics(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    metrics_dir = run_dir / "metrics"
+    output_dir = run_dir / "analysis"
+
+    metrics_payload = {
+        "strategy_val": {
+            "status": "ok",
+            "metrics": {
+                "passenger_count_jsd": 0.02,
+                "passenger_count_chi2": 0.4,
+                "total_amount_log1p_w1": 0.8,
+                "total_amount_log1p_ks": 0.7,
+                "total_amount_log1p_quantile_mae": 0.6,
+                "exact_match_rate_with_r_rounded": 0.9,
+            },
+            "source_file": str(metrics_dir / "metrics_tht_tripgen_val.json"),
+        },
+        "strategy_hold": {
+            "status": "ok",
+            "metrics": {
+                "passenger_count_jsd": 0.01,
+                "passenger_count_chi2": 0.3,
+                "total_amount_log1p_w1": 0.6,
+                "total_amount_log1p_ks": 0.5,
+                "total_amount_log1p_quantile_mae": 0.4,
+                "exact_match_rate_with_r_rounded": 0.91,
+            },
+            "source_file": str(metrics_dir / "metrics_tht_tripgen_hold.json"),
+        },
+        "strategy_hold_vs_val_real": {
+            "status": "ok",
+            "metrics": {
+                "od_jsd": 0.01,
+                "od_chi2": 5.0,
+            },
+            "source_file": str(metrics_dir / "metrics_hold_vs_val_real.json"),
+        },
+    }
+    _write_json(metrics_dir / "metrics_export.json", {
+        "sections": metrics_payload,
+    })
+    _write_json(
+        run_dir / "training" / "training_export.json",
+        {"summary": {}, "sections": {}},
+    )
+
+    report = analyze_run_exports.analyze_run_exports(
+        run_dir=run_dir,
+        metrics_export_json=metrics_dir / "metrics_export.json",
+        training_export_json=run_dir / "training" / "training_export.json",
+        output_dir=output_dir,
+        strict=True,
+        no_plots=True,
+        analyze_training=False,
+    )
+
+    comparison_map = {
+        row["metric_key"]: row for row in report["metric_comparisons"] if row["record_type"] == "comparison_summary"
+    }
+    assert comparison_map["passenger_count_jsd"]["synth_to_hold"] == 0.01
+    assert comparison_map["total_amount_log1p_w1"]["synth_to_val"] == 0.8
+    assert comparison_map["exact_match_rate_with_r_rounded"]["synth_to_hold"] == 0.91

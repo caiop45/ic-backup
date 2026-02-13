@@ -34,8 +34,8 @@ def _make_df(n: int, seed: int) -> pd.DataFrame:
     )
     return pd.DataFrame(
         {
-            "hora_do_dia": hour,
-            "dia_da_semana": dow,
+            "hour_of_day": hour,
+            "day_of_week": dow,
             "pickup_id": pickup,
             "dropoff_id": dropoff,
             "r": r,

@@ -9,16 +9,16 @@ from utils.metrics import dcr_quantile, rdcr
 def test_dcr_quantile_simple():
     ref_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 0],
-            "hora_do_dia": [0, 1],
+            "day_of_week": [0, 0],
+            "hour_of_day": [0, 1],
             "pickup_id": [1, 1],
             "dropoff_id": [2, 2],
         }
     )
     other_df = pd.DataFrame(
         {
-            "dia_da_semana": [0],
-            "hora_do_dia": [0],
+            "day_of_week": [0],
+            "hour_of_day": [0],
             "pickup_id": [1],
             "dropoff_id": [2],
         }
@@ -41,24 +41,24 @@ def test_dcr_quantile_simple():
 def test_rdcr_ratio():
     train_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 0],
-            "hora_do_dia": [0, 1],
+            "day_of_week": [0, 0],
+            "hour_of_day": [0, 1],
             "pickup_id": [1, 1],
             "dropoff_id": [2, 2],
         }
     )
     hold_df = pd.DataFrame(
         {
-            "dia_da_semana": [0],
-            "hora_do_dia": [5],
+            "day_of_week": [0],
+            "hour_of_day": [5],
             "pickup_id": [1],
             "dropoff_id": [2],
         }
     )
     synth_df = pd.DataFrame(
         {
-            "dia_da_semana": [0],
-            "hora_do_dia": [0],
+            "day_of_week": [0],
+            "hour_of_day": [0],
             "pickup_id": [1],
             "dropoff_id": [2],
         }

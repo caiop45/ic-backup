@@ -6,11 +6,11 @@ from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 def test_tht_tripgen_conditional_cardinalities_keys_match_encoded_columns():
     df = pd.DataFrame(
         {
-            "hora_do_dia": [0, 1, 2],
+            "hour_of_day": [0, 1, 2],
             "r": [0.1, 0.2, 0.3],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [3, 2, 1],
-            "dia_da_semana": [0, 3, 5],
+            "day_of_week": [0, 3, 5],
             "is_weekend": [0, 0, 1],
             "month": [4, 4, 5],
             "passenger_count": [1, 2, 1],

@@ -182,15 +182,15 @@ def compute_attribute_metrics(
                 real_z, synth_z, quantiles
             )
 
-            if "hora_do_dia" in real_df.columns and "hora_do_dia" in synth_df.columns:
+            if "hour_of_day" in real_df.columns and "hour_of_day" in synth_df.columns:
                 real_tmp = pd.DataFrame(
-                    {"hora_do_dia": real_df["hora_do_dia"], "_val": real_z}
+                    {"hour_of_day": real_df["hour_of_day"], "_val": real_z}
                 )
                 synth_tmp = pd.DataFrame(
-                    {"hora_do_dia": synth_df["hora_do_dia"], "_val": synth_z}
+                    {"hour_of_day": synth_df["hour_of_day"], "_val": synth_z}
                 )
                 metrics[f"{fare_col}_log1p_median_mae_by_hour"] = median_profile_mae(
-                    real_tmp, synth_tmp, group_col="hora_do_dia", value_col="_val"
+                    real_tmp, synth_tmp, group_col="hour_of_day", value_col="_val"
                 )
 
             for passenger_col in passenger_cols:

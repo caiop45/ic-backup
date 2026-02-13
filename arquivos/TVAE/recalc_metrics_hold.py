@@ -38,7 +38,7 @@ def main() -> int:
         "--run-dir",
         type=Path,
         default=Path(config.SAVE_DATA_DIR) / "baseline",
-        help="Diretorio do experimento (contendo checkpoint e mappings).",
+        help="Run directory containing the checkpoint and mappings.",
     )
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--mappings", type=Path, default=None)
@@ -55,13 +55,13 @@ def main() -> int:
         "--plot-dir",
         type=Path,
         default=None,
-        help="Diretorio para salvar graficos (default: <run-dir>/plots).",
+        help="Directory for saving figures (default: <run-dir>/plots).",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
-        help="Arquivo de metrics (default: <run-dir>/metrics/metrics_tvae_order_1_hold.json).",
+        help="Metrics output JSON (default: <run-dir>/metrics/metrics_tvae_order_1_hold.json).",
     )
     args = parser.parse_args()
 
@@ -78,7 +78,7 @@ def main() -> int:
     train_df = train_tvae._filter_known(train_df, transformer)
     hold_df = train_tvae._filter_known(hold_df, transformer)
     if len(hold_df) == 0:
-        raise RuntimeError("hold_df vazio; ajuste TRAIN_FRAC/VAL_FRAC ou use outro split.")
+        raise RuntimeError("hold_df is empty; adjust TRAIN_FRAC/VAL_FRAC or use a different split.")
 
     model_key = order_key
     if not model_key.startswith("tvae_"):

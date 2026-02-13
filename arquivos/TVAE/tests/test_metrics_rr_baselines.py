@@ -12,16 +12,16 @@ from utils.evaluation import compute_metrics
 def _make_eval_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     real_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2, 3, 4, 0, 1, 2],
-            "hora_do_dia": [0, 1, 2, 3, 4, 5, 6, 7],
+            "day_of_week": [0, 1, 2, 3, 4, 0, 1, 2],
+            "hour_of_day": [0, 1, 2, 3, 4, 5, 6, 7],
             "pickup_id": [1, 2, 3, 1, 2, 3, 1, 2],
             "dropoff_id": [2, 3, 1, 2, 3, 1, 2, 3],
         }
     )
     synth_df = pd.DataFrame(
         {
-            "dia_da_semana": [0, 1, 2, 3, 4],
-            "hora_do_dia": [1, 2, 3, 4, 5],
+            "day_of_week": [0, 1, 2, 3, 4],
+            "hour_of_day": [1, 2, 3, 4, 5],
             "pickup_id": [1, 2, 3, 1, 2],
             "dropoff_id": [2, 3, 1, 2, 3],
         }

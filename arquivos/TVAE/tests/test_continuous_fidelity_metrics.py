@@ -48,7 +48,7 @@ def test_safe_log1p_clips_negatives():
 
 def test_median_profile_mae():
     _, median_profile_mae, _, _, _ = _metrics()
-    real = pd.DataFrame({"hora_do_dia": [0, 0, 1], "val": [10.0, 12.0, 20.0]})
-    synth = pd.DataFrame({"hora_do_dia": [0, 1], "val": [11.0, 18.0]})
-    mae = median_profile_mae(real, synth, group_col="hora_do_dia", value_col="val")
+    real = pd.DataFrame({"hour_of_day": [0, 0, 1], "val": [10.0, 12.0, 20.0]})
+    synth = pd.DataFrame({"hour_of_day": [0, 1], "val": [11.0, 18.0]})
+    mae = median_profile_mae(real, synth, group_col="hour_of_day", value_col="val")
     assert mae > 0.0

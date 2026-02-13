@@ -1,11 +1,11 @@
 """THT-TripGen data loader for x~ = (h, r, o, d, u).
 
 Schema:
-    h: discrete time bin (0..H-1) stored in "hora_do_dia"
+    h: discrete time bin (0..H-1) stored in "hour_of_day"
     r: residual within bin in [0,1) stored in "r"
     o: pickup_id
     d: dropoff_id
-    u: calendar conditionals (dia_da_semana; optional is_weekend, month)
+    u: calendar conditionals (day_of_week; optional is_weekend, month)
 
 Splits:
     S1: weekly chronological split (temporal generalization)
@@ -77,7 +77,7 @@ def _compute_h_and_r(
 
 def _tht_tripgen_columns() -> List[str]:
     cols = list(config.THT_TRIPGEN_COLUMNS)
-    required = ["hora_do_dia", "r", "pickup_id", "dropoff_id", "dia_da_semana"]
+    required = ["hour_of_day", "r", "pickup_id", "dropoff_id", "day_of_week"]
     missing = [col for col in required if col not in cols]
     if missing:
         raise ValueError(f"THT_TRIPGEN_COLUMNS missing required columns: {missing}")
@@ -110,9 +110,9 @@ def load_raw_data_tht_tripgen() -> pd.DataFrame:
         eps=config.THT_MIN_R_EPS,
     )
 
-    df["hora_do_dia"] = h.astype("int64")
+    df["hour_of_day"] = h.astype("int64")
     df["r"] = r.astype("float32")
-    df["dia_da_semana"] = df[config.DATETIME_COL].dt.dayofweek.astype("int64")
+    df["day_of_week"] = df[config.DATETIME_COL].dt.dayofweek.astype("int64")
     df["pickup_id"] = df[config.PICKUP_ID_COL].astype("int64")
     df["dropoff_id"] = df[config.DROPOFF_ID_COL].astype("int64")
 
@@ -134,7 +134,7 @@ def load_raw_data_tht_tripgen() -> pd.DataFrame:
                 df = df.loc[~neg_mask].reset_index(drop=True)
 
     if config.THT_USE_WEEKEND:
-        df["is_weekend"] = (df["dia_da_semana"] >= 5).astype("int64")
+        df["is_weekend"] = (df["day_of_week"] >= 5).astype("int64")
     if config.THT_USE_MONTH:
         df["month"] = df[config.DATETIME_COL].dt.month.astype("int64")
 

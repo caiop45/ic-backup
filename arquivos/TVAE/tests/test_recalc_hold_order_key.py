@@ -16,8 +16,8 @@ from utils.serialization import save_mappings
 def _tiny_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "hora_do_dia": [0, 1, 2],
-            "dia_da_semana": [0, 1, 2],
+            "hour_of_day": [0, 1, 2],
+            "day_of_week": [0, 1, 2],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [2, 3, 1],
         }

@@ -24,7 +24,7 @@ from utils.helpers import set_seed
 from utils.metrics import compute_fast_metrics, joint_counts, save_metrics_json
 from utils.serialization import save_checkpoint, save_mappings
 
-#Debug prints
+# Optional tee that duplicates logs to both stdout and the file logger.
 class Tee:
     def __init__(self, *streams: Iterable):
         self.streams = streams
@@ -38,15 +38,15 @@ class Tee:
         for s in self.streams:
             s.flush()
 
-#Peso beta da loss
+# KL annealing weight (beta) schedule for the VAE regularizer.
 def _kl_beta(epoch: int) -> float:
     if config.KL_ANNEAL_EPOCHS <= 0:
         return config.KL_BETA_END
     progress = min(1.0, epoch / float(config.KL_ANNEAL_EPOCHS))
     return config.KL_BETA_START + (config.KL_BETA_END - config.KL_BETA_START) * progress
 
-#Remove do dataset de teste as categorias que não estão no dataset de treino
-#Isso aqui é legalizado?
+# Keep only categories seen in the training split.
+# This keeps train/validation data aligned for consistent indexing.
 def _filter_known(df: pd.DataFrame, transformer: CategoricalTransformer) -> pd.DataFrame:
     mask = np.ones(len(df), dtype=bool)
     for col in transformer.columns:
@@ -60,14 +60,12 @@ def _prepare_dataloaders(
     val_df: pd.DataFrame,
     transformer: CategoricalTransformer,
 ) -> Tuple[DataLoader, DataLoader, pd.DataFrame, pd.DataFrame]:
-    #Faz um mapeamento para transformar em indices, meio que mapea os ids que temos atualmente em cada uma das counas
-    # E adapta isso de forma que fique com ids continuos sem nenhum buraco, tipo, ao invés de ter 253, 255, 256
-    # vai ter algo como 0, 1, 2, 3, 4, 5, ...
-    #Precisa disso pro one hot encoding
+    # Map categorical values to contiguous integer ids required by one-hot encoding.
+    # This avoids sparse index gaps and produces a compact index range (0..N-1).
     train_idx = transformer.transform(train_df, drop_unknown=True)
     val_idx = transformer.transform(val_df, drop_unknown=True)
 
-    #onehot enconding treino e teste
+    # One-hot encode train and validation tensors.
     x_train = transformer.one_hot_encode(train_idx)
     x_val = transformer.one_hot_encode(val_idx)
 
@@ -79,7 +77,7 @@ def _prepare_dataloaders(
         torch.from_numpy(x_val).float(),
         torch.from_numpy(val_idx.to_numpy(dtype=np.int64)),
     )
-    #Divide em batches
+    # Build train and validation batch loaders.
     train_loader = DataLoader(
         train_ds,
         batch_size=config.BATCH_SIZE,
@@ -97,7 +95,7 @@ def _prepare_dataloaders(
 
     return train_loader, val_loader, train_idx, val_idx
 
-#Condição real p(dropoff | pickup) para regularizador KL por batch
+# Dropoff conditional log-probability p(dropoff | pickup) for KL regularization.
 def _build_dropoff_conditional_log_q(
     train_idx: pd.DataFrame,
     *,
@@ -127,13 +125,13 @@ def _build_pickup_log_q(
     probs = (counts + eps) / (total + eps * pickup_size)
     return np.log(probs)
 
-#Aqui é só um pequeno truque no formato dos dados para que fique conforme o decoder do TVAE precisa.
+# Align decoder inputs to the TVAE autoregressive order expected by the model.
 def _build_y_indices(
     idx_batch: torch.Tensor, col_to_idx: Dict[str, int], order: List[str]
 ) -> Dict[str, torch.Tensor]:
     return {col: idx_batch[:, col_to_idx[col]] for col in order}
 
-#aqui é onde realmente faz o treino do modelo.
+# Run one forward/backward pass for one split and return aggregate statistics.
 def _epoch_pass(
     model: TVAEAutoregressive,
     loader: DataLoader,
@@ -269,14 +267,14 @@ def _param_norm(model: TVAEAutoregressive) -> float:
         total += float(param.detach().pow(2).sum().item())
     return float(math.sqrt(total))
 
-#Gera os dados sintéticos usando o decoder do TVAE. 
-#Ele faz isso sequencialmente dessa forma:
-# Primeiro ele pega algum ponto aleatório Z no espaço latente
-#Ai ele pega o pickup_id que esse z representa 
-# Então dado z, pickupid, ele gera o dropoff_id que esse z representa
-#Na mesma lógica, dia_da_semana dado z, pickup_id, dropoff_id
-# hora_do_dia dado z, pickup_id, dropoff_id, dia_da_semana
-#Esse processo é repetido pra cada linha gerada 
+# Generate synthetic rows from the TVAE decoder.
+# For each latent draw:
+#   1) sample a latent vector z
+#   2) sample pickup_id
+#   3) sample dropoff_id conditioned on pickup_id
+#   4) sample day_of_week conditioned on pickup/dropoff
+#   5) sample hour_of_day conditioned on pickup/dropoff/day_of_week
+# Repeat for all requested samples.
 def _sample_synthetic(
     model: TVAEAutoregressive,
     transformer: CategoricalTransformer,
@@ -286,7 +284,7 @@ def _sample_synthetic(
     device: torch.device,
     batch_size: int = 10000,
 ) -> pd.DataFrame:
-    """Gera amostras sintéticas em batches para evitar estouro de memória GPU."""
+    """Sample synthetic rows in batches to keep GPU memory bounded."""
     model.eval()
     all_samples: Dict[str, List[np.ndarray]] = {col: [] for col in transformer.columns}
 
@@ -301,12 +299,12 @@ def _sample_synthetic(
             for col in transformer.columns:
                 all_samples[col].append(samples[col].cpu().numpy())
 
-            # Liberar memória GPU
+            # Release temporary GPU tensors after each batch.
             del z, samples
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
-    # Concatenar todos os batches
+    # Concatenate all generated batches.
     data = {col: np.concatenate(all_samples[col]) for col in transformer.columns}
     df_idx = pd.DataFrame(data)
     df_decoded = transformer.decode_indices(df_idx)
@@ -322,19 +320,19 @@ def _eval_sample_size(df: pd.DataFrame) -> int:
     n_eval = min(n_eval, len(df))
     return n_eval
 
-#Calcula as métricas de qualidade dos dados sintéticos. Nao são as métricas do paper!
-#Marginal: JSD, chi² por coluna	Cada coluna isoladamente
-#OD: od_jsd, od_coverage	Pares pickup-dropoff
-#Temporal: time_jsd, time_coverage	Combinações dia-hora
-#Joint: joint_jsd, mode_dropping	OD × dia × hora completo
-#salva valores unicos de cada coluna em cada split
+# Compute synthetic quality metrics (TVAE-specific plus helper summaries).
+# Marginal: per-column JSD and chi-square.
+# OD: od_jsd, od_coverage on pickup/dropoff pairs.
+# Temporal: time_jsd, time_coverage on day-hour combinations.
+# Joint: joint_jsd, mode_dropping on OD × day × hour.
+# Store unique counts and coverage for each split.
 def _save_value_counts(df: pd.DataFrame, col: str, path: Path) -> None:
     counts = df[col].value_counts().sort_index()
     out = counts.rename("count").reset_index().rename(columns={"index": col})
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
 
-#salva estatisticas de cada split
+# Persist per-split summary statistics.
 def _save_split_stats(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -369,7 +367,7 @@ def _save_split_stats(
         stats = _summary(name, df)
         save_metrics_json(stats, output_dir / f"split_stats_{name}.json")
 
-#Serve só pra rodar experimentos com parametros diferentes, daria pra usar o optuna pra isso
+#Apply experiment-level config overrides (basic framework for future sweep tooling).
 def _apply_overrides(overrides: Dict[str, object]) -> Dict[str, object]:
     backup: Dict[str, object] = {}
     for key, val in overrides.items():
@@ -403,22 +401,11 @@ def _run_output_subdirs(output_dir: Path) -> Tuple[Path, Path]:
     data_dir.mkdir(parents=True, exist_ok=True)
     return metrics_dir, data_dir
 
-#Aqui ele junta o fluxo todo:
-
-#_prepare_dataloaders: prepara os dados para o treino
-#TVAEAutoregressive: instancia o modelo TVAE autoregressivo
-# Ai entra no loop de treino:
-# for epoch in 1...EPOCHS:
-   #_epoch_pass(train=true) - treina o modelo
-   #_epoch_pass(train=false) - avalia o modelo
-   #se o modelo melhorar, salva o checkpoint
-   #se o modelo nao melhorar, para o treino
-   #depois de treinar, gera os dados sintéticos
-#Depois do treino ele vai carregar o best_state
-# Salva o modelo localmente, salva os mappings, salva as métricas
-# Depois ele gera os dados sintéticos com _sample_synthetic()
-# Ai calcula as métricas com _computer_metrics()
-# Depois ele finaliza calculando as métricas do paper com compute_paper_metrics()
+# Orchestrate the full single-order training flow.
+# - prepare data tensors and model
+# - run epoch loop with early stopping
+# - restore best state and generate synthetic samples
+# - compute metrics and persist checkpoints/mappings/results
 def train_single_order(
     order_key: str,
     order: List[str],
@@ -740,9 +727,8 @@ def train_single_order(
 
     return alias_metrics or {}
 
-#Aqui é só o orquestrador final, ele chama o train_single_order 
-# A implementação tá desse jeito pq anteriormente eu tinha testado treinar ordens diferentes e comparar
-# Mas dá pra simplificar isso aqui e unificar o train_single_order e train_all_orders
+# Entry point orchestrating training experiments; currently the standard flow calls
+# train_single_order for the fixed order configured in config.
 def train_all_orders() -> None:
     raw_train_df, raw_val_df, raw_hold_df = load_and_split()
     experiments = config.EXPERIMENTS or {"baseline": {}}

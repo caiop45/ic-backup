@@ -12,8 +12,8 @@ def _make_df(r_values: list[float]) -> pd.DataFrame:
     n = len(r_values)
     return pd.DataFrame(
         {
-            "dia_da_semana": [0] * n,
-            "hora_do_dia": [0] * n,
+            "day_of_week": [0] * n,
+            "hour_of_day": [0] * n,
             "pickup_id": [1] * n,
             "dropoff_id": [2] * n,
             "r": r_values,

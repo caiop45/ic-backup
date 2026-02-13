@@ -7,11 +7,11 @@ from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 def test_tht_tripgen_transformer_decode_roundtrip():
     df = pd.DataFrame(
         {
-            "hora_do_dia": [5, 10, 15],
+            "hour_of_day": [5, 10, 15],
             "r": [0.25, 0.5, 0.75],
             "pickup_id": [1, 2, 3],
             "dropoff_id": [3, 2, 1],
-            "dia_da_semana": [0, 3, 6],
+            "day_of_week": [0, 3, 6],
             "passenger_count": [1, 2, 1],
             "total_amount": [10.0, 20.0, 30.0],
         }
@@ -22,7 +22,7 @@ def test_tht_tripgen_transformer_decode_roundtrip():
     decoded = transformer.decode(encoded)
 
     pdt.assert_series_equal(
-        decoded["hora_do_dia"], df["hora_do_dia"].reset_index(drop=True), check_dtype=False
+        decoded["hour_of_day"], df["hour_of_day"].reset_index(drop=True), check_dtype=False
     )
     pdt.assert_series_equal(
         decoded["pickup_id"], df["pickup_id"].reset_index(drop=True), check_dtype=False
@@ -31,8 +31,8 @@ def test_tht_tripgen_transformer_decode_roundtrip():
         decoded["dropoff_id"], df["dropoff_id"].reset_index(drop=True), check_dtype=False
     )
     pdt.assert_series_equal(
-        decoded["dia_da_semana"],
-        df["dia_da_semana"].reset_index(drop=True),
+        decoded["day_of_week"],
+        df["day_of_week"].reset_index(drop=True),
         check_dtype=False,
     )
     pdt.assert_series_equal(

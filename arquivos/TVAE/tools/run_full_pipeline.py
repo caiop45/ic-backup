@@ -8,28 +8,25 @@ from pathlib import Path
 from typing import Dict
 
 import torch
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 import config
 import train_tht_tripgen
-import train_tvae
-from tools import compare_models, plot_training_curves
+from tools import plot_training_curves
 from utils.helpers import set_seed
+from utils.evaluation import compute_attribute_metrics
 from utils.metrics import joint_metrics, od_metrics, save_metrics_json
 from tools.export_run_metrics import export_run_metrics
 from tools.export_training_info import export_training_info
 
 import recalc_downstream_tht_tripgen
-import recalc_metrics_hold
 import recalc_metrics_tht_tripgen_hold
 import tools.build_tht_zone_embeddings as build_tht_zone_embeddings
 from data_processing import tht_tripgen_loader
 from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from utils.serialization import THT_TRIPGEN_MAPPINGS_FILENAME, load_tht_tripgen_mappings
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 def _timestamp_tag(prefix: str) -> str:
     stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -84,24 +81,6 @@ def _ensure_embeddings(build: bool, device: str | None, skip_check: bool) -> Non
     _call_main(build_tht_zone_embeddings, args)
 
 
-def _maybe_train_tvae(run_dir: Path, force_train: bool) -> None:
-    checkpoint = run_dir / f"tvae_{config.FIXED_ORDER_KEY}.pt"
-    if checkpoint.exists() and not force_train:
-        print(f"[Pipeline] baseline reuse: {run_dir}")
-        return
-    print(f"[Pipeline] training baseline TVAE -> {run_dir}")
-    backup = _override_config(
-        {
-            "SAVE_DATA_DIR": str(run_dir.parent),
-            "EXPERIMENTS": {run_dir.name: {}},
-        }
-    )
-    try:
-        train_tvae.train_all_orders()
-    finally:
-        _restore_config(backup)
-
-
 def _maybe_train_tht_tripgen(run_dir: Path, force_train: bool, device: torch.device) -> None:
     checkpoint = run_dir / "tht_tripgen.pt"
     if checkpoint.exists() and not force_train:
@@ -113,20 +92,6 @@ def _maybe_train_tht_tripgen(run_dir: Path, force_train: bool, device: torch.dev
         train_tht_tripgen.train_tht_tripgen(run_tag=run_dir.name, device=device)
     finally:
         _restore_config(backup)
-
-
-def _recalc_baseline(run_dir: Path, force_sample: bool) -> None:
-    args = [
-        "recalc_metrics_hold.py",
-        "--run-dir",
-        str(run_dir),
-        "--order-key",
-        config.FIXED_ORDER_KEY,
-        "--no-plots",
-    ]
-    if force_sample:
-        args.append("--force-sample")
-    _call_main(recalc_metrics_hold, args)
 
 
 def _recalc_tht_tripgen(run_dir: Path, force_sample: bool) -> None:
@@ -145,6 +110,24 @@ def _filter_known_real(df, transformer: THTTripGenTransformer):
     idx = transformer.transform(df, drop_unknown=False)
     mask = idx.notna().all(axis=1) & idx["r"].notna()
     return df.loc[mask].reset_index(drop=True)
+
+
+def _attribute_columns() -> tuple[list[str], list[str]]:
+    passenger_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_DISCRETE_COLUMNS",
+            [str(getattr(config, "PASSENGER_COL", "passenger_count"))],
+        )
+    )
+    fare_cols = list(
+        getattr(
+            config,
+            "THT_ATTRIBUTE_CONTINUOUS_COLUMNS",
+            [str(getattr(config, "FARE_COL", "total_amount"))],
+        )
+    )
+    return passenger_cols, fare_cols
 
 
 def _recalc_hold_vs_val_real(run_dir: Path) -> None:
@@ -169,6 +152,17 @@ def _recalc_hold_vs_val_real(run_dir: Path) -> None:
     metrics = {}
     metrics.update(od_metrics(hold_df, val_df))
     metrics.update(joint_metrics(hold_df, val_df))
+    if bool(getattr(config, "EVAL_ENABLE_ATTRIBUTE_METRICS", True)):
+        passenger_cols, fare_cols = _attribute_columns()
+        metrics.update(
+            compute_attribute_metrics(
+                hold_df,
+                val_df,
+                passenger_cols=passenger_cols,
+                fare_cols=fare_cols,
+                order_key="tht_tripgen_hold_vs_val",
+            )
+        )
 
     out_dir = run_dir / "metrics"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -203,19 +197,6 @@ def _recalc_downstream_tht_tripgen(
     if seed is not None:
         args += ["--seed", str(seed)]
     _call_main(recalc_downstream_tht_tripgen, args)
-
-
-def _compare_runs(baseline_dir: Path, tht_tripgen_dir: Path, out_dir: Path) -> None:
-    args = [
-        "compare_models.py",
-        "--baseline-run",
-        str(baseline_dir),
-        "--tht-tripgen-run",
-        str(tht_tripgen_dir),
-        "--out-dir",
-        str(out_dir),
-    ]
-    _call_main(compare_models, args)
 
 
 def _plot_curves(run_dir: Path, out_dir: Path, label: str) -> None:
@@ -261,7 +242,6 @@ def _resolve_training_export_output_path(
 
 
 def _export_run_metrics(
-    baseline_dir: Path | None,
     strategy_dir: Path,
     *,
     args: argparse.Namespace,
@@ -275,7 +255,6 @@ def _export_run_metrics(
     )
     export_run_metrics(
         strategy_dir,
-        baseline_run_dir=baseline_dir,
         output_json=output_json,
         output_csv=output_csv,
         strict=args.metrics_export_strict,
@@ -284,7 +263,6 @@ def _export_run_metrics(
 
 
 def _export_training_info(
-    baseline_dir: Path | None,
     strategy_dir: Path,
     *,
     args: argparse.Namespace,
@@ -298,7 +276,6 @@ def _export_training_info(
     )
     export_training_info(
         strategy_run_dir=strategy_dir,
-        baseline_run_dir=baseline_dir,
         output_json=output_json,
         output_csv=output_csv,
         strict=args.training_export_strict,
@@ -333,8 +310,7 @@ def _analyze_exports(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run full TVAE + THT-TripGen pipeline")
-    parser.add_argument("--baseline-run-dir", type=Path, default=None)
+    parser = argparse.ArgumentParser(description="Run full THT-TripGen pipeline")
     parser.add_argument(
         "--tht-tripgen-run-dir",
         "--strategy-run-dir",
@@ -342,16 +318,6 @@ def main() -> int:
         type=Path,
         default=None,
         help="THT-TripGen run directory (alias: --strategy-run-dir)",
-    )
-    parser.add_argument(
-        "--tht-only",
-        action="store_true",
-        help="Run only THT-TripGen (skips baseline + comparison).",
-    )
-    parser.add_argument(
-        "--skip-baseline",
-        action="store_true",
-        help="Skip baseline TVAE training + eval.",
     )
     parser.add_argument("--force-train", action="store_true")
     parser.add_argument("--force-sample", action="store_true")
@@ -364,11 +330,6 @@ def main() -> int:
         "--skip-embeddings",
         action="store_true",
         help="Skip embeddings build/check (assumes Efunc/Ecomb already exist).",
-    )
-    parser.add_argument(
-        "--skip-comparison",
-        action="store_true",
-        help="Skip comparison tables/plots (useful for THT-only runs).",
     )
     parser.add_argument(
         "--skip-plots",
@@ -412,7 +373,6 @@ def main() -> int:
         default=None,
         help="Seed for downstream sampling/training.",
     )
-    parser.add_argument("--comparison-dir", type=Path, default=None)
     parser.add_argument(
         "--export-metrics",
         action="store_true",
@@ -547,29 +507,12 @@ def main() -> int:
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
 
-    if args.tht_only:
-        args.skip_baseline = True
-        args.skip_comparison = True
-
     set_seed(config.GLOBAL_SEED)
 
-    baseline_dir = _resolve_run_dir(
-        str(args.baseline_run_dir) if args.baseline_run_dir is not None else None,
-        "baseline",
-    )
     tht_tripgen_dir = _resolve_run_dir(
         str(args.tht_tripgen_run_dir) if args.tht_tripgen_run_dir is not None else None,
         "tht_tripgen",
     )
-
-    comparison_dir = (
-        args.comparison_dir
-        if args.comparison_dir is not None
-        else Path(config.OUTPUT_BASE_DIR) / "comparison"
-    )
-    comparison_dir.mkdir(parents=True, exist_ok=True)
-    plots_dir = comparison_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
 
     device = (
         torch.device(args.device)
@@ -585,12 +528,7 @@ def main() -> int:
 
     _ensure_embeddings(build_embeddings, str(device), args.skip_embeddings)
 
-    if not args.skip_baseline:
-        _maybe_train_tvae(baseline_dir, args.force_train)
     _maybe_train_tht_tripgen(tht_tripgen_dir, args.force_train, device)
-
-    if not args.skip_baseline:
-        _recalc_baseline(baseline_dir, args.force_sample)
     _recalc_tht_tripgen(tht_tripgen_dir, args.force_sample)
     _recalc_hold_vs_val_real(tht_tripgen_dir)
     if not args.skip_downstream:
@@ -602,16 +540,8 @@ def main() -> int:
             model=args.downstream_model,
             seed=args.downstream_seed,
         )
-    _export_run_metrics(
-        baseline_dir if not args.skip_baseline else None,
-        tht_tripgen_dir,
-        args=args,
-    )
-    _export_training_info(
-        baseline_dir if not args.skip_baseline else None,
-        tht_tripgen_dir,
-        args=args,
-    )
+    _export_run_metrics(tht_tripgen_dir, args=args)
+    _export_training_info(tht_tripgen_dir, args=args)
     metrics_output_json, _ = _resolve_export_output_path(
         args=args,
         strategy_run_dir=tht_tripgen_dir,
@@ -627,20 +557,8 @@ def main() -> int:
         training_export_json=training_output_json,
     )
 
-    if args.skip_baseline and not args.skip_comparison:
-        print("[Pipeline] baseline skipped; comparison disabled")
-        args.skip_comparison = True
-
-    if not args.skip_comparison:
-        _compare_runs(baseline_dir, tht_tripgen_dir, comparison_dir)
-
     if not args.skip_plots:
-        if not args.skip_baseline:
-            _plot_curves(baseline_dir, plots_dir, "baseline")
-        _plot_curves(tht_tripgen_dir, plots_dir, "tht_tripgen")
-
-    if not args.skip_comparison:
-        print(f"[Pipeline] comparison outputs -> {comparison_dir}")
+        _plot_curves(tht_tripgen_dir, tht_tripgen_dir / "plots", "tht_tripgen")
     return 0
 
 

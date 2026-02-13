@@ -49,7 +49,7 @@ def _write_markdown_table(df: pd.DataFrame, path: Path) -> None:
 
 def _resolve_device(device_str: str) -> torch.device:
     if device_str == "cuda" and not torch.cuda.is_available():
-        print("[Warn] cuda nao disponivel; usando cpu.")
+        print("[Warn] CUDA is not available; using CPU.")
         return torch.device("cpu")
     return torch.device(device_str)
 
@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path(__file__).resolve().parent / "comparacao_graficos",
+        default=Path(__file__).resolve().parent / "comparison_plots",
     )
     args = parser.parse_args()
 
@@ -82,7 +82,7 @@ def main() -> int:
         "pickup_pair_kl": save_root / "pickup_pair_kl" / "baseline",
     }
 
-    print("[Info] carregando dados (split de acordo com config.py)")
+    print("[Info] loading data split based on config.py")
     raw_train_df, raw_val_df, raw_hold_df = load_and_split()
 
     # train_vs_val dropoff plot (shared)
@@ -102,7 +102,7 @@ def main() -> int:
         ckpt = run_dir / "tvae_order_1.pt"
         mappings = run_dir / "mappings_order_1.json"
         if not ckpt.exists() or not mappings.exists():
-            print(f"[Warn] faltando checkpoint/mappings em {run_dir}, skip {run_name}")
+            print(f"[Warn] missing checkpoint or mappings in {run_dir}, skip {run_name}")
             continue
 
         run_out = out_dir / run_name
@@ -118,7 +118,7 @@ def main() -> int:
             train_df = train_tvae._filter_known(raw_train_df, transformer)
             hold_df = train_tvae._filter_known(raw_hold_df, transformer)
             if len(hold_df) == 0:
-                print(f"[Warn] hold vazio apos filtro, skip {run_name}")
+                print(f"[Warn] hold split is empty after filtering, skip {run_name}")
                 continue
 
             n_eval = len(hold_df) if args.rows is None else min(args.rows, len(hold_df))
@@ -151,10 +151,10 @@ def main() -> int:
             metrics["n_synth"] = float(len(synth_df))
             save_metrics_json(metrics, metrics_path)
 
-        # copiar train_vs_val dropoff plot para cada run
+        # Copy shared train-vs-val dropoff plot to each run directory.
         shutil.copy2(train_vs_val_plot, run_out / "hist_train_vs_val_dropoff_id.png")
 
-        # adicionar linha na tabela (se o json existir)
+        # Add one row to the summary table if metrics JSON exists.
         if metrics_path.exists():
             with metrics_path.open("r", encoding="utf-8") as fh:
                 m = json.load(fh)

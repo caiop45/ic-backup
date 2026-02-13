@@ -34,49 +34,6 @@ def _touch_file(path: Path, text: str = "") -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _write_tvae_run(path: Path, with_log: bool = True) -> None:
-    _write_json(
-        path / f"mappings_{config.FIXED_ORDER_KEY}.json",
-        {"columns": ["pickup_id", "dropoff_id"], "categories": {"pickup_id": [1, 2], "dropoff_id": [3, 4]}},
-    )
-    _write_csv(
-        path / f"loss_{config.FIXED_ORDER_KEY}.csv",
-        [
-            {
-                "epoch": "1",
-                "train_loss": "1.0",
-                "val_loss": "1.2",
-            }
-        ],
-    )
-    checkpoint = {
-        "meta": {
-            "column_sizes": [2, 2],
-            "order": ["pickup_id", "dropoff_id"],
-            "encoder_hidden_dims": [16],
-            "decoder_hidden_dims": [16],
-            "latent_dim": 4,
-        },
-        "epoch": 1,
-        "optimizer_state": {"lr": 0.001},
-        "metrics": {"best_val": 1.2},
-        "model_state": {"linear": torch.tensor([[1.0, 2.0]])},
-    }
-    torch.save(checkpoint, path / f"tvae_{config.FIXED_ORDER_KEY}.pt")
-    _write_csv(
-        path / "logs" / "scalars.csv",
-        [
-            {"step": "1", "tag": "train/loss", "value": "1.0"},
-            {"step": "1", "tag": "val/loss", "value": "1.2"},
-        ],
-    )
-    if with_log:
-        _touch_file(
-            Path(config.LOG_DIR) / path.name / f"train_{config.FIXED_ORDER_KEY}.log",
-            "[Epoch 001] train_loss=1.0 val_loss=1.2\n",
-        )
-
-
 def _write_tht_run(path: Path, with_log: bool = True) -> None:
     _write_json(
         path / "mappings_tht_tripgen.json",
@@ -148,30 +105,22 @@ def _write_tht_run(path: Path, with_log: bool = True) -> None:
         )
 
 
-def test_collect_training_sections_with_missing_optional_tvae(tmp_path, monkeypatch):
+def test_collect_training_sections_only_tht(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path / "logs"))
-    baseline = tmp_path / "baseline"
     strategy = tmp_path / "strategy"
 
-    _write_tvae_run(baseline)
     _write_tht_run(strategy)
     Path(config.LOG_DIR).mkdir(parents=True, exist_ok=True)
 
     bundle = export_training_info.build_training_export_bundle(
         strategy_run_dir=strategy,
-        baseline_run_dir=baseline,
         strict=False,
         parse_logs=True,
         run_label="smoke",
     )
 
     sections = bundle["sections"]
-    assert sections["baseline_tvae_checkpoint"]["status"] == "ok"
-    assert sections["baseline_tvae_mappings"]["status"] == "ok"
-    assert sections["baseline_tvae_log"]["status"] == "ok"
     assert sections["strategy_tht_checkpoint"]["status"] == "ok"
-    assert "strategy_tvae_checkpoint" not in sections
-    assert "strategy_tvae_artifacts" not in sections
 
 
 def test_export_training_info_writes_json_and_csv(tmp_path, monkeypatch):

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "3.0.0"
 
 
 SectionRecord = dict[str, Any]
@@ -259,40 +259,9 @@ def _collect_topk_tables(run_dir: Path) -> list[dict[str, Any]]:
 
 def collect_metric_sections(
     strategy_run_dir: Path,
-    baseline_run_dir: Path | None = None,
     strict: bool = False,
 ) -> tuple[dict[str, SectionRecord], list[dict[str, Any]]]:
     sections: dict[str, SectionRecord] = {}
-
-    sections["baseline_hold"] = _load_section(
-        section_name="baseline_hold",
-        run_dir=baseline_run_dir or strategy_run_dir,
-        candidates=[
-            Path("metrics") / "metrics_tvae_order_1_hold.json",
-            Path("metrics_tvae_order_1_hold.json"),
-            Path("metrics") / "metrics_tvae_order_1.json",
-            Path("metrics_tvae_order_1.json"),
-            Path("metrics") / "metrics_order_1_hold.json",
-            Path("metrics_order_1_hold.json"),
-        ],
-        strict=False if baseline_run_dir is None else strict,
-    )
-    sections["baseline_hold"].update(_section_meta("baseline_hold", baseline_run_dir or strategy_run_dir, "hold"))
-
-    sections["baseline_val"] = _load_section(
-        section_name="baseline_val",
-        run_dir=baseline_run_dir or strategy_run_dir,
-        candidates=[
-            Path("metrics") / "metrics_tvae_order_1_val.json",
-            Path("metrics_tvae_order_1_val.json"),
-            Path("metrics") / "metrics_tvae_val.json",
-            Path("metrics_tvae_val.json"),
-            Path("metrics") / "metrics_order_1_val.json",
-            Path("metrics_order_1_val.json"),
-        ],
-        strict=False,
-    )
-    sections["baseline_val"].update(_section_meta("baseline_val", baseline_run_dir or strategy_run_dir, "val"))
 
     sections["strategy_hold"] = _load_section(
         section_name="strategy_hold",
@@ -551,14 +520,12 @@ def _read_topk_summary(topk_tables: Sequence[dict[str, Any]]) -> list[dict[str, 
 
 def build_export_bundle(
     strategy_run_dir: Path,
-    baseline_run_dir: Path | None = None,
     *,
     strict: bool = False,
     run_label: str | None = None,
 ) -> dict[str, Any]:
     sections, topk_tables = collect_metric_sections(
         strategy_run_dir=strategy_run_dir,
-        baseline_run_dir=baseline_run_dir,
         strict=strict,
     )
     return {
@@ -566,7 +533,6 @@ def build_export_bundle(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "pipeline_context": {
             "strategy_run_dir": str(strategy_run_dir),
-            "baseline_run_dir": str(baseline_run_dir) if baseline_run_dir else None,
             "run_label": run_label,
             "strict": strict,
         },
@@ -621,7 +587,6 @@ def _write_csv(bundle: Mapping[str, Any], path: Path) -> None:
 
 def export_run_metrics(
     strategy_run_dir: Path,
-    baseline_run_dir: Path | None = None,
     *,
     output_json: Path | None = None,
     output_csv: Path | None = None,
@@ -630,7 +595,6 @@ def export_run_metrics(
 ) -> dict[str, Any]:
     bundle = build_export_bundle(
         strategy_run_dir=strategy_run_dir,
-        baseline_run_dir=baseline_run_dir,
         strict=strict,
         run_label=run_label,
     )
@@ -654,19 +618,13 @@ def _bool_or_none(raw: str | None) -> bool | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Consolidate run metric files into one JSON + CSV for external tooling."
+        description="Consolidate THT-TripGen run metrics into one JSON + CSV for external tooling."
     )
     parser.add_argument(
         "--strategy-run-dir",
         required=True,
         type=Path,
         help="Path to THT-TripGen experiment directory.",
-    )
-    parser.add_argument(
-        "--baseline-run-dir",
-        type=Path,
-        default=None,
-        help="Optional baseline run directory for comparison context.",
     )
     parser.add_argument(
         "--output-json",
@@ -714,7 +672,6 @@ def main() -> int:
 
     export_run_metrics(
         strategy_run_dir=strategy_run_dir,
-        baseline_run_dir=args.baseline_run_dir,
         output_json=output_json if args.export_json is not False else None,
         output_csv=output_csv if args.export_csv is not False else None,
         strict=args.strict,

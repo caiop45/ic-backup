@@ -15,11 +15,11 @@ from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 def test_sample_tht_tripgen_outputs_csv(tmp_path, monkeypatch):
     df = pd.DataFrame(
         {
-            "hora_do_dia": [0, 1, 2, 3],
+            "hour_of_day": [0, 1, 2, 3],
             "r": [0.1, 0.2, 0.3, 0.4],
             "pickup_id": [1, 2, 3, 4],
             "dropoff_id": [2, 3, 4, 1],
-            "dia_da_semana": [0, 1, 2, 3],
+            "day_of_week": [0, 1, 2, 3],
             "passenger_count": [1, 2, 1, 3],
             "total_amount": [10.0, 20.0, 30.0, 40.0],
         }
