@@ -26,7 +26,7 @@ import recalc_downstream_tht_tripgen
 import recalc_metrics_hold
 import recalc_metrics_tht_tripgen_hold
 import tools.build_tht_zone_embeddings as build_tht_zone_embeddings
-from data_processing.tht_tripgen_loader import load_and_split_tht_tripgen
+from data_processing import tht_tripgen_loader
 from data_processing.tht_tripgen_transformer import THTTripGenTransformer
 from utils.serialization import THT_TRIPGEN_MAPPINGS_FILENAME, load_tht_tripgen_mappings
 
@@ -149,7 +149,10 @@ def _filter_known_real(df, transformer: THTTripGenTransformer):
 
 def _recalc_hold_vs_val_real(run_dir: Path) -> None:
     """Recompute real split overlap metrics between hold and val (no synthetic sampling)."""
-    _, val_df, hold_df = load_and_split_tht_tripgen()
+    try:
+        _, val_df, hold_df = recalc_metrics_tht_tripgen_hold.load_and_split_tht_tripgen()
+    except Exception:
+        _, val_df, hold_df = tht_tripgen_loader.load_and_split_tht_tripgen()
     mappings_path = run_dir / THT_TRIPGEN_MAPPINGS_FILENAME
     if not mappings_path.exists():
         print(f"[Pipeline] skipping hold-vs-val real split metrics: missing mappings {mappings_path}")

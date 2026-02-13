@@ -18,6 +18,9 @@ except Exception:  # pragma: no cover - optional dependency
     plt = None
 
 
+PLOT_LIB_AVAILABLE = plt is not None
+
+
 ANALYSIS_SCHEMA_VERSION = "1.0.0"
 ANALYSIS_DIR_NAME = "analysis"
 
@@ -174,6 +177,54 @@ def _to_csv_value(value: Any) -> str | int | float | bool:
     if isinstance(value, (int, str)):
         return value
     return str(value)
+
+
+def _to_html_value(value: Any, precision: int = 6) -> str:
+    if value is None or value == "":
+        return "&ndash;"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return f"{value}"
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return "&ndash;"
+        if value == 0:
+            return "0"
+        return f"{value:.{precision}f}".rstrip("0").rstrip(".")
+    return html.escape(str(value))
+
+
+def _to_html_label(value: Any) -> str:
+    if value is None or value == "":
+        return "&ndash;"
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return html.escape(str(value))
+
+
+def _risk_badge_class(level: str) -> str:
+    if level == "low":
+        return "risk-low"
+    if level == "medium":
+        return "risk-medium"
+    if level == "high":
+        return "risk-high"
+    return "risk-unknown"
+
+
+def _metric_preferred_direction(lower_is_better: bool) -> str:
+    return "smaller is better" if lower_is_better else "larger is better"
+
+
+def _safe_float_sort(value: Any) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+    return float("inf")
 
 
 def _metric_aliases(key: str) -> tuple[str, ...]:
@@ -444,6 +495,7 @@ def _build_tooltips() -> dict[str, dict[str, str]]:
             "metric_name": metric_name,
             "metric_family": family,
             "description": description,
+            "preferred_direction": _metric_preferred_direction(lower_is_better),
             "lower_is_better": "true" if lower_is_better else "false",
         }
         for metric_key, family, metric_name, lower_is_better, description in STRUCTURE_METRICS
@@ -452,6 +504,7 @@ def _build_tooltips() -> dict[str, dict[str, str]]:
         "metric_id": "comparison_summary__abs_gap_to_hold_val",
         "metric_name": "Abs gap from hold->val",
         "metric_family": "derived",
+        "preferred_direction": "smaller is better",
         "description": "Absolute difference between synth->val and hold->val. Lower suggests synthetic is close to real split drift.",
         "lower_is_better": "true",
     }
@@ -459,6 +512,7 @@ def _build_tooltips() -> dict[str, dict[str, str]]:
         "metric_id": "comparison_summary__relative_gap_to_hold_val",
         "metric_name": "Relative gap from hold->val",
         "metric_family": "derived",
+        "preferred_direction": "smaller is better",
         "description": "Absolute gap normalized by hold->val. Helps compare scale across metrics.",
         "lower_is_better": "true",
     }
@@ -466,6 +520,7 @@ def _build_tooltips() -> dict[str, dict[str, str]]:
         "metric_id": "comparison_summary__generalization_shift",
         "metric_name": "Generalization shift",
         "metric_family": "derived",
+        "preferred_direction": "smaller is better",
         "description": "How much synth->val differs from synth->hold beyond hold->val variation.",
         "lower_is_better": "true",
     }
@@ -488,6 +543,7 @@ def _write_tooltips_csv(path: Path) -> dict[str, dict[str, str]]:
         "metric_name",
         "metric_family",
         "description",
+        "preferred_direction",
         "lower_is_better",
     ]
     rows = [dict(item) for item in (tooltips.values())]
@@ -638,9 +694,11 @@ def _collect_summary_rows(
     return rows
 
 
-def _build_comparison_plot(metric_summary: list[dict[str, Any]], out_path: Path) -> bool:
+def _build_comparison_plot(
+    metric_summary: list[dict[str, Any]], out_path: Path
+) -> tuple[bool, str]:
     if plt is None:
-        return False
+        return False, "matplotlib_not_available"
     by_family = defaultdict(list)
     for row in metric_summary:
         family = str(row.get("metric_family"))
@@ -649,62 +707,68 @@ def _build_comparison_plot(metric_summary: list[dict[str, Any]], out_path: Path)
             continue
         by_family[family].append(row)
     if not by_family:
-        return False
+        return False, "no_family_rows"
 
-    fig, axes = None, None
-    for family_idx, (family, rows) in enumerate(by_family.items()):
-        if not rows:
-            continue
-        metrics = sorted([r["metric_key"] for r in rows])
-        labels = list(dict.fromkeys(metrics))
-        directions = [d for d, _ in COMPARE_DIRECTIONS]
-        xs = range(len(labels))
-        width = 0.2
-        if fig is None:
-            fig = plt.figure(figsize=(max(8, len(labels) * 0.8), 4 * len(by_family)))
-            axes = fig.subplots(len(by_family), 1, squeeze=False)
-        fam_rows = by_family[family]
-        family_values: dict[str, list[float | None]] = {d: [] for d, _ in COMPARE_DIRECTIONS}
-        for label in labels:
-            for direction in directions:
-                value = next(
-                    (
-                        row.get("value")
-                        for row in fam_rows
-                        if row.get("metric_key") == label and row.get("direction") == direction
-                    ),
-                    None,
-                )
-                if isinstance(value, str):
-                    value = _safe_float(value)
-                family_values[direction].append(value)
+    try:
+        fig, axes = None, None
+        for family_idx, (family, rows) in enumerate(by_family.items()):
+            if not rows:
+                continue
+            metrics = sorted([r["metric_key"] for r in rows])
+            labels = list(dict.fromkeys(metrics))
+            directions = [d for d, _ in COMPARE_DIRECTIONS]
+            xs = range(len(labels))
+            width = 0.2
+            if fig is None:
+                fig = plt.figure(figsize=(max(8, len(labels) * 0.8), 4 * len(by_family)))
+                axes = fig.subplots(len(by_family), 1, squeeze=False)
+            fam_rows = by_family[family]
+            family_values: dict[str, list[float | None]] = {d: [] for d, _ in COMPARE_DIRECTIONS}
+            for label in labels:
+                for direction in directions:
+                    value = next(
+                        (
+                            row.get("value")
+                            for row in fam_rows
+                            if row.get("metric_key") == label and row.get("direction") == direction
+                        ),
+                        None,
+                    )
+                    if isinstance(value, str):
+                        value = _safe_float(value)
+                    family_values[direction].append(value)
 
-        axis = axes[family_idx][0] if axes is not None else None
-        if axis is None:
-            continue
-        for offset_i, direction in enumerate(directions):
-            y_values = [
-                v if isinstance(v, (float, int)) else math.nan for v in family_values[direction]
-            ]
-            axis.bar([x + offset_i * width for x in xs], y_values, width=width, label=direction)
-        axis.set_title(f"{family.upper()} structure comparisons")
-        axis.set_xticks([x + width for x in xs])
-        axis.set_xticklabels(labels, rotation=35, ha="right")
-        axis.set_ylabel("value")
-        axis.grid(True, alpha=0.2)
-        axis.legend()
+            axis = axes[family_idx][0] if axes is not None else None
+            if axis is None:
+                continue
+            for offset_i, direction in enumerate(directions):
+                y_values = [
+                    v if isinstance(v, (float, int)) else math.nan for v in family_values[direction]
+                ]
+                axis.bar([x + offset_i * width for x in xs], y_values, width=width, label=direction)
+            axis.set_title(f"{family.upper()} structure comparisons")
+            axis.set_xticks([x + width for x in xs])
+            axis.set_xticklabels(labels, rotation=35, ha="right")
+            axis.set_ylabel("value")
+            axis.grid(True, alpha=0.2)
+            axis.legend()
 
-    if fig is None or axes is None:
-        return False
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-    return True
+        if fig is None or axes is None:
+            return False, "empty_plot"
+
+        fig.tight_layout()
+        fig.savefig(out_path)
+        plt.close(fig)
+        return True, "generated"
+    except Exception as exc:  # pragma: no cover - runtime safety
+        return False, f"plot_error:{exc}"
 
 
-def _build_leakage_plot(metric_summary: list[dict[str, Any]], out_path: Path) -> bool:
+def _build_leakage_plot(
+    metric_summary: list[dict[str, Any]], out_path: Path
+) -> tuple[bool, str]:
     if plt is None:
-        return False
+        return False, "matplotlib_not_available"
     points = []
     for row in metric_summary:
         metric_key = row.get("metric_key")
@@ -716,67 +780,78 @@ def _build_leakage_plot(metric_summary: list[dict[str, Any]], out_path: Path) ->
         points.append((str(metric_key), float(relative), str(row.get("metric_family", ""))))
 
     if not points:
-        return False
+        return False, "no_relative_gaps"
 
-    labels = [p[0] for p in points]
-    values = [p[1] for p in points]
-    families = [p[2] for p in points]
-    colors = ["#4c72b0" if f == "od" else "#dd8452" if f == "joint" else "#55a868" for f in families]
+    try:
+        labels = [p[0] for p in points]
+        values = [p[1] for p in points]
+        families = [p[2] for p in points]
+        colors = [
+            "#4c72b0" if f == "od" else "#dd8452" if f == "joint" else "#55a868"
+            for f in families
+        ]
 
-    fig, ax = plt.subplots(figsize=(max(8, len(points) * 0.35), 5))
-    ax.bar(range(len(points)), values, color=colors)
-    ax.set_xticks(range(len(points)))
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_title("Relative deviation vs hold->val")
-    ax.set_ylabel("abs(synth->val - hold->val) / hold->val")
-    ax.axhline(0.1, color="#2ca02c", linestyle="--", alpha=0.8, label="0.10")
-    ax.axhline(0.25, color="#d62728", linestyle="--", alpha=0.8, label="0.25")
-    ax.grid(True, alpha=0.2)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-    return True
+        fig, ax = plt.subplots(figsize=(max(8, len(points) * 0.35), 5))
+        ax.bar(range(len(points)), values, color=colors)
+        ax.set_xticks(range(len(points)))
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.set_title("Relative deviation vs hold->val")
+        ax.set_ylabel("abs(synth->val - hold->val) / hold->val")
+        ax.axhline(0.1, color="#2ca02c", linestyle="--", alpha=0.8, label="0.10")
+        ax.axhline(0.25, color="#d62728", linestyle="--", alpha=0.8, label="0.25")
+        ax.grid(True, alpha=0.2)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(out_path)
+        plt.close(fig)
+        return True, "generated"
+    except Exception as exc:  # pragma: no cover - runtime safety
+        return False, f"plot_error:{exc}"
 
 
-def _build_training_plot(training_rows: list[dict[str, Any]], out_path: Path) -> bool:
+def _build_training_plot(
+    training_rows: list[dict[str, Any]], out_path: Path
+) -> tuple[bool, str]:
     if plt is None:
-        return False
+        return False, "matplotlib_not_available"
     if not training_rows:
-        return False
+        return False, "no_training_rows"
 
-    points_by_metric: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
-    for row in training_rows:
-        metric_name = str(row.get("metric_name", ""))
-        step = _safe_float(row.get("step"))
-        value = row.get("value")
-        if not metric_name or step is None or value is None:
-            continue
-        section = str(row.get("run_section"))
-        points_by_metric[metric_name].append((float(step), float(value), section))
+    try:
+        points_by_metric: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
+        for row in training_rows:
+            metric_name = str(row.get("metric_name", ""))
+            step = _safe_float(row.get("step"))
+            value = row.get("value")
+            if not metric_name or step is None or value is None:
+                continue
+            section = str(row.get("run_section"))
+            points_by_metric[metric_name].append((float(step), float(value), section))
 
-    if not points_by_metric:
-        return False
+        if not points_by_metric:
+            return False, "no_plottable_training_rows"
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for metric_name, points in points_by_metric.items():
-        points.sort(key=lambda item: item[0])
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        label = metric_name
-        ax.plot(xs, ys, marker="o", markersize=2, label=label)
-    ax.set_xlabel("step")
-    ax.set_ylabel("metric value")
-    ax.set_title("Training curves (all sections)")
-    ax.grid(True, alpha=0.2)
-    ax.legend(fontsize=8, loc="upper right")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-    return True
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for metric_name, points in points_by_metric.items():
+            points.sort(key=lambda item: item[0])
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            label = metric_name
+            ax.plot(xs, ys, marker="o", markersize=2, label=label)
+        ax.set_xlabel("step")
+        ax.set_ylabel("metric value")
+        ax.set_title("Training curves (all sections)")
+        ax.grid(True, alpha=0.2)
+        ax.legend(fontsize=8, loc="upper right")
+        fig.tight_layout()
+        fig.savefig(out_path)
+        plt.close(fig)
+        return True, "generated"
+    except Exception as exc:  # pragma: no cover - runtime safety
+        return False, f"plot_error:{exc}"
 
 
-def _render_html_report(
+def _render_html_report_legacy(
     output_path: Path,
     run_dir: Path,
     metrics_summary: list[dict[str, Any]],
@@ -882,6 +957,237 @@ def _render_html_report(
 
   <h2>Generated plots</h2>
   {''.join(plot_thumbnails)}
+</body>
+</html>
+"""
+    output_path.write_text(html_text, encoding="utf-8")
+
+
+def _format_plot_status_badge(is_generated: bool) -> str:
+    return "ok" if is_generated else "missing"
+
+
+def _render_html_report(
+    output_path: Path,
+    run_dir: Path,
+    metrics_summary: list[dict[str, Any]],
+    generated_at: str,
+    generated_files: Mapping[str, str],
+    plot_files: Mapping[str, str],
+    plot_generation: Mapping[str, Any],
+    tooltips: Mapping[str, Mapping[str, str]],
+) -> None:
+    metric_rows = sorted(
+        [row for row in metrics_summary if row.get("metric_key") not in {None, ""}],
+        key=lambda item: (str(item.get("metric_family")), str(item.get("metric_key"))),
+    )
+
+    risk_counts = {
+        "low": sum(1 for row in metric_rows if row.get("risk_level") == "low"),
+        "medium": sum(1 for row in metric_rows if row.get("risk_level") == "medium"),
+        "high": sum(1 for row in metric_rows if row.get("risk_level") == "high"),
+        "unknown": sum(1 for row in metric_rows if row.get("risk_level") not in {"low", "medium", "high"}),
+    }
+
+    metric_rows_html = []
+    for row in metric_rows:
+        metric_rows_html.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('metric_key', '')))}</td>"
+            f"<td>{html.escape(str(row.get('metric_label', '')))}</td>"
+            f"<td>{html.escape(str(row.get('metric_family', '')))}</td>"
+            f"<td>{_to_html_value(row.get('synth_to_val'))}</td>"
+            f"<td>{_to_html_value(row.get('synth_to_hold'))}</td>"
+            f"<td>{_to_html_value(row.get('hold_to_val'))}</td>"
+            f"<td><span class=\"risk-pill {_risk_badge_class(str(row.get('risk_level')))}\">"
+            f"{html.escape(str(row.get('risk_level', 'unknown')))}</span></td>"
+            f"<td>{_to_html_value(row.get('relative_gap_to_hold_val'), precision=4)}</td>"
+            f"<td>{_to_html_value(row.get('abs_gap_to_hold_val'), precision=4)}</td>"
+            f"<td>{_to_html_value(row.get('description', ''))}</td>"
+            "</tr>"
+        )
+
+    tooltip_rows_html = []
+    for row in sorted(tooltips.values(), key=lambda item: str(item.get("metric_id"))):
+        tooltip_rows_html.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('metric_id', '')))}</td>"
+            f"<td>{html.escape(str(row.get('metric_name', '')))}</td>"
+            f"<td>{html.escape(str(row.get('metric_family', '')))}</td>"
+            f"<td>{html.escape(str(row.get('preferred_direction', '')))}</td>"
+            f"<td>{html.escape(str(row.get('description', '')))}</td>"
+            f"<td>{_to_html_label(row.get('lower_is_better') == 'true')}</td>"
+            "</tr>"
+        )
+
+    plot_plan = [
+        ("comparison_plot", "comparison_metrics", "Family-level metric comparison"),
+        ("leakage_plot", "comparison_leakage", "Relative split deviation"),
+        ("training_plot", "training_curves", "Training time-series"),
+    ]
+    plot_cards = []
+    for key, title, subtitle in plot_plan:
+        outputs = plot_generation.get("outputs", {})
+        status = outputs.get(key, {})
+        generated = bool(status.get("generated", False))
+        path = status.get("path") or plot_files.get(key, "")
+        reason = status.get("reason", "")
+        status_text = _format_plot_status_badge(generated)
+        badge_class = "risk-low" if generated else "risk-high"
+        plot_path = output_path.parent / str(path) if path else None
+        image = (
+            f"<img src='{html.escape(str(path))}' alt='{html.escape(title)}'/>"
+            if path and plot_path is not None and plot_path.exists()
+            else "<p class='muted'>No image file was generated.</p>"
+        )
+        plot_cards.append(
+            "<article class='plot-card'>"
+            f"<h3>{html.escape(title)} <span class='plot-chip'>{html.escape(status_text)}</span></h3>"
+            f"<p class='muted'>{html.escape(subtitle)}</p>"
+            f"<p class='muted'>Path: {html.escape(str(path) if path else 'n/a')} · "
+            f"Reason: {html.escape(str(reason) if reason else 'generated' if generated else 'not_available')}</p>"
+            f"<p class='muted'><span class='{badge_class}'>"
+            f"{'generated' if generated else 'missing'}</span></p>"
+            f"{image}"
+            "</article>"
+        )
+
+    html_text = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset=\"utf-8\" />
+  <title>Run Export Analysis</title>
+  <style>
+    :root {{
+      --bg: #f8fafc;
+      --text: #0f172a;
+      --muted: #64748b;
+      --line: #dbe0ea;
+      --panel: #ffffff;
+      --risk-low: #166534;
+      --risk-medium: #92400e;
+      --risk-high: #991b1b;
+      --risk-unknown: #334155;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: "Inter", "Segoe UI", Arial, sans-serif;
+      background: radial-gradient(circle at 20% -20%, #bfdbfe40, transparent 45%), radial-gradient(circle at 80% 0%, #ddd6fe40, transparent 35%), var(--bg);
+      color: var(--text);
+    }}
+    .page {{ max-width: 1200px; margin: 0 auto; padding: 24px 16px 40px; }}
+    h1, h2, h3 {{ margin: 0; }}
+    h2 {{ margin-top: 20px; font-size: 1.22rem; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 14px; }}
+    .muted {{ color: var(--muted); }}
+    .kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }}
+    .kpi {{ border: 1px solid var(--line); border-radius: 10px; padding: 9px; background: #f8fafc; }}
+    .kpi .value {{ font-size: 1.2rem; font-weight: 700; }}
+    .kpi .label {{ font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }}
+    .grid-two {{ display: grid; grid-template-columns: 1.1fr 1fr; gap: 12px; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+    th, td {{ border-bottom: 1px solid var(--line); padding: 8px 7px; text-align: left; white-space: nowrap; }}
+    th {{ background: #f1f5f9; color: #334155; text-transform: uppercase; font-size: 0.74rem; }}
+    td {{ vertical-align: top; }}
+    .desc-cell {{ max-width: 280px; white-space: normal; }}
+    .risk-low {{ background: #dcfce7; color: var(--risk-low); }}
+    .risk-medium {{ background: #fef9c3; color: var(--risk-medium); }}
+    .risk-high {{ background: #fee2e2; color: var(--risk-high); }}
+    .risk-unknown {{ background: #e2e8f0; color: var(--risk-unknown); }}
+    .risk-pill {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.73rem; font-weight: 700; }}
+    .table-wrap {{ overflow: auto; margin-top: 10px; }}
+    .plot-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }}
+    .plot-card {{ border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #fff; }}
+    .plot-card h3 {{ font-size: 0.96rem; margin-bottom: 4px; }}
+    .plot-chip {{ border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; font-size: 0.7rem; }}
+    .plot-card img {{ width: 100%; display: block; border-radius: 8px; border: 1px solid var(--line); }}
+    @media (max-width: 900px) {{ .grid-two {{ grid-template-columns: 1fr; }} }}
+    pre {{ margin: 0; font-size: 0.74rem; white-space: pre-wrap; }}
+  </style>
+</head>
+<body>
+  <main class='page'>
+    <section class='panel'>
+      <h1>Run Export Analysis</h1>
+      <p class='muted'>Run: {html.escape(str(run_dir))}</p>
+      <p class='muted'>Generated at: {html.escape(generated_at)}</p>
+      <div class='kpis'>
+        <div class='kpi'><div class='value'>{len(metric_rows)}</div><div class='label'>Metric rows</div></div>
+        <div class='kpi'><div class='value'>{risk_counts['low']}</div><div class='label'>Low risk</div></div>
+        <div class='kpi'><div class='value'>{risk_counts['medium']}</div><div class='label'>Medium risk</div></div>
+        <div class='kpi'><div class='value'>{risk_counts['high']}</div><div class='label'>High risk</div></div>
+        <div class='kpi'><div class='value'>{risk_counts['unknown']}</div><div class='label'>Unknown risk</div></div>
+      </div>
+    </section>
+
+    <section class='panel'>
+      <h2>Artifacts</h2>
+      <div class='grid-two'>
+        <ul class='muted'>
+          <li>{html.escape(generated_files.get('analysis_report_json', ''))}</li>
+          <li>{html.escape(generated_files.get('analysis_summary_csv', ''))}</li>
+          <li>{html.escape(generated_files.get('analysis_metrics_long_csv', ''))}</li>
+          <li>{html.escape(generated_files.get('analysis_training_long_csv', ''))}</li>
+          <li>{html.escape(generated_files.get('analysis_tooltips_csv', ''))}</li>
+        </ul>
+        <pre>{html.escape(json.dumps(generated_files, indent=2))}</pre>
+      </div>
+      <p class='muted'>matplotlib available: {html.escape(str(plot_generation.get("plot_library_available", False)))}</p>
+    </section>
+
+    <section class='panel'>
+      <h2>Metric comparison summary</h2>
+      <div class='table-wrap'>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Label</th>
+              <th>Family</th>
+              <th>Synth→Val</th>
+              <th>Synth→Hold</th>
+              <th>Hold→Val</th>
+              <th>Risk</th>
+              <th>Relative gap</th>
+              <th>Abs gap</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(metric_rows_html)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class='panel'>
+      <h2>Metric definitions</h2>
+      <div class='table-wrap'>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric ID</th>
+              <th>Name</th>
+              <th>Family</th>
+              <th>Preferred</th>
+              <th>Description</th>
+              <th>Lower is better</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(tooltip_rows_html)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class='panel'>
+      <h2>Generated plots</h2>
+      <p class='muted'>A missing plot usually means missing data rows or no plot dependency in the environment.</p>
+      <div class='plot-grid'>{''.join(plot_cards)}</div>
+    </section>
+  </main>
 </body>
 </html>
 """
@@ -1030,16 +1336,49 @@ def analyze_run_exports(
     ])
 
     plot_files: dict[str, str] = {}
+    plot_generation: dict[str, Any] = {
+        "requested": not no_plots,
+        "plot_library_available": PLOT_LIB_AVAILABLE,
+        "outputs": {
+            "comparison_plot": {"generated": False, "path": "", "reason": "not_attempted"},
+            "leakage_plot": {"generated": False, "path": "", "reason": "not_attempted"},
+            "training_plot": {"generated": False, "path": "", "reason": "not_attempted"},
+        },
+    }
+
     if not no_plots:
         comparison_plot = figures_dir / OUTPUT_FIG_COMPARISON
-        if _build_comparison_plot(metric_summary_rows, comparison_plot):
+        comparison_generated, comparison_reason = _build_comparison_plot(
+            metric_summary_rows, comparison_plot
+        )
+        if comparison_generated:
             plot_files["comparison_plot"] = str(comparison_plot.relative_to(output_dir))
+        plot_generation["outputs"]["comparison_plot"] = {
+            "generated": comparison_generated,
+            "path": str(comparison_plot.relative_to(output_dir)),
+            "reason": comparison_reason,
+        }
         leakage_plot = figures_dir / OUTPUT_FIG_LEAKAGE
-        if _build_leakage_plot(metric_summary_rows, leakage_plot):
+        leakage_generated, leakage_reason = _build_leakage_plot(metric_summary_rows, leakage_plot)
+        if leakage_generated:
             plot_files["leakage_plot"] = str(leakage_plot.relative_to(output_dir))
+        plot_generation["outputs"]["leakage_plot"] = {
+            "generated": leakage_generated,
+            "path": str(leakage_plot.relative_to(output_dir)),
+            "reason": leakage_reason,
+        }
         training_plot = figures_dir / OUTPUT_FIG_TRAINING
-        if _build_training_plot(training_rows, training_plot):
+        training_generated, training_reason = _build_training_plot(training_rows, training_plot)
+        if training_generated:
             plot_files["training_plot"] = str(training_plot.relative_to(output_dir))
+        plot_generation["outputs"]["training_plot"] = {
+            "generated": training_generated,
+            "path": str(training_plot.relative_to(output_dir)),
+            "reason": training_reason,
+        }
+    else:
+        for plot_key in plot_generation["outputs"]:
+            plot_generation["outputs"][plot_key]["reason"] = "disabled_by_flag"
 
     generated_at = datetime.now(timezone.utc).isoformat()
     report_payload: dict[str, Any] = {
@@ -1091,6 +1430,7 @@ def analyze_run_exports(
             "figures_dir": str(figures_dir),
             **{name: str(path) for name, path in plot_files.items()},
         },
+        "plot_generation": plot_generation,
     }
     output_json.write_text(json.dumps(report_payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -1098,10 +1438,10 @@ def analyze_run_exports(
         output_path=html_report,
         run_dir=run_dir,
         metrics_summary=metric_summary_rows,
-        training_summary_rows=training_rows,
         generated_at=generated_at,
         generated_files=report_payload["generated_files"],
         plot_files=plot_files,
+        plot_generation=plot_generation,
         tooltips=tooltips,
     )
 

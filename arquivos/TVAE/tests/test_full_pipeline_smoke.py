@@ -93,6 +93,8 @@ def test_full_pipeline_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "THT_BATCH_SIZE", 2)
     monkeypatch.setattr(config, "THT_LR", 1e-3)
     monkeypatch.setattr(config, "THT_WEIGHT_DECAY", 0.0)
+    monkeypatch.setattr(config, "THT_NUM_WORKERS", 0)
+    monkeypatch.setattr(config, "NUM_WORKERS", 0)
 
     baseline_dir = tmp_path / "save" / "baseline_smoke"
     strategy_dir = tmp_path / "save" / "strategy_smoke"
